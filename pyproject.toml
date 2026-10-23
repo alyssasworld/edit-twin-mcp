@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "edit-twin-mcp"
+version = "0.1.0"
+description = "An MCP server that lets Claude Code rough-cut your Final Cut Pro projects, and learns your editing style from your own edits."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+keywords = ["final cut pro", "fcpxml", "mcp", "claude", "video editing", "rough cut", "jump cut"]
+classifiers = [
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Video :: Non-Linear Editor",
+]
+dependencies = ["mcp>=2.0,<3"]
+
+[project.optional-dependencies]
+transcribe = [
+    "mlx-whisper; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "faster-whisper; sys_platform != 'darwin' or platform_machine != 'arm64'",
+]
+
+[project.scripts]
+edit-twin-mcp = "edit_twin_mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
