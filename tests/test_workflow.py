@@ -195,6 +195,49 @@ async def run(root: str) -> None:
             await call("render_preview", {"output_path": os.path.join(root, "preview.mp4")})
             assert os.path.getsize(os.path.join(root, "preview.mp4")) > 1000
 
+            # Captions: a vertical reel gets one word at a time, timed to the edit
+            dry = await call("add_captions", {"dry_run": True})
+            assert dry["format"] == "short" and dry["count"] > 5, dry
+            assert all(len(c["text"].split()) == 1 for c in dry["captions"])
+            assert "um" not in [c["text"] for c in dry["captions"]]
+            added = await call("add_captions", {"fixes": {"tech": "technology"}})
+            assert added["count"] == dry["count"]
+
+            def titles_of(timeline):
+                return [c for it in timeline["items"] for c in it.get("connected", []) if c["type"] == "title"]
+
+            tl = await call("get_timeline")
+            titles = titles_of(tl)
+            assert len(titles) == added["count"] and any(t["text"] == "technology" for t in titles)
+            spans = sorted((t["start"], t["end"]) for t in titles)
+            assert all(a[1] <= b[0] + 1e-6 for a, b in zip(spans, spans[1:])), spans
+            look_lane = max(c["lane"] for c in tl["items"][0]["connected"] if c.get("adjustment_clip"))
+            assert all(t["lane"] > look_lane for t in titles)
+
+            # The user restyles one caption by hand; save it as their long-form style
+            await call("edit_title", {"ref": titles[0]["ref"], "color": "#ffe9c7", "size": 90})
+            saved = await call("save_caption_style", {"name": "my subs", "from_title": titles[0]["ref"],
+                                                      "mode": "line", "case": "lower", "default_for": "long"})
+            assert saved["style"]["color"] == "#ffe9c7" and saved["style"]["size"] == 90
+            assert "shadow" not in saved["style"]   # the copied title keeps its own look
+            lines = await call("add_captions", {"format": "long"})
+            titles = titles_of(await call("get_timeline"))
+            assert len(titles) == lines["count"] < added["count"]
+            assert any(" " in t["text"] for t in titles) and all(t["text"] == t["text"].lower() for t in titles)
+            v = await call("validate_timeline")
+            assert v["ok"], v
+            style = await call("get_style")
+            assert style["caption_defaults"]["long"] == "my subs"
+            assert "template" not in style["caption_styles"]["my subs"]
+            assert any(f["family"] == "Helvetica Neue" for f in style["fonts"])
+            srt = await call("export_srt", {"output_path": os.path.join(root, "subs.srt")})
+            with open(srt["saved"]) as fh:
+                assert "-->" in fh.read()
+            await call("save_caption_style", {"name": "x", "mode": "word", "font": "No Such Font Zz"},
+                       expect_error=True)
+            await call("remove_captions")
+            assert not titles_of(await call("get_timeline"))
+
             await call("delete_clip", {"ref": "99"}, expect_error=True)
             if sys.platform != "darwin":
                 await call("fcp_menu", {"path": ["File", "Export XML…"]}, expect_error=True)

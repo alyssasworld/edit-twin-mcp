@@ -54,10 +54,12 @@ else
   echo "  claude mcp add --scope user edit-twin -- \"$HERE/.venv/bin/edit-twin-mcp\""
 fi
 
-# 4. Install (or update) the rough-cut skill for Claude Code
-mkdir -p "$HOME/.claude/skills/edit-twin-rough-cut"
-cp "$HERE/skills/edit-twin-rough-cut/SKILL.md" "$HOME/.claude/skills/edit-twin-rough-cut/SKILL.md"
-echo "Installed the /edit-twin-rough-cut skill."
+# 4. Install (or update) the skills for Claude Code
+for skill in edit-twin-rough-cut edit-twin-captions; do
+  mkdir -p "$HOME/.claude/skills/$skill"
+  cp "$HERE/skills/$skill/SKILL.md" "$HOME/.claude/skills/$skill/SKILL.md"
+  echo "Installed the /$skill skill."
+done
 
 mkdir -p "$HOME/Movies/Edit Twin"
 cat <<'MSG'
