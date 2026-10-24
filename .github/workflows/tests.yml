@@ -1,0 +1,54 @@
+# Runs the test suite on every pull request and on pushes to main.
+# The tests make their own footage with ffmpeg and stub the transcript, so no
+# Final Cut Pro or speech model is needed. Apple's FCPXML DTD ships inside
+# Final Cut Pro, so the DTD check is skipped here; it runs on a Mac with Final Cut.
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest      # what users run
+            python: "3.12"
+          - os: ubuntu-latest     # oldest supported Python, and the off-Mac code paths
+            python: "3.10"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install ffmpeg
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew install ffmpeg
+          else
+            sudo apt-get update && sudo apt-get install -y ffmpeg libxml2-utils
+          fi
+
+      - name: Install Edit Twin
+        run: python -m pip install -e . pytest
+
+      - name: Run tests
+        run: python -m pytest -q tests
