@@ -33,6 +33,7 @@ RANGE_TAGS = {"rating", "keyword"}
 FILTER_TAGS = {"filter-video", "filter-video-mask", "filter-audio"}
 BASIC_TITLE_UID = ".../Titles.localized/Bumper:Opener.localized/Basic Title.localized/Basic Title.moti"
 BASIC_TITLE_POSITION_KEY = "9999/999166631/999166633/1/100/101"
+CAPTION_NOTE = "Edit Twin caption"
 
 # Order of child elements inside a clip, per the FCPXML DTD. Lower comes first.
 _RANK = {
@@ -72,6 +73,12 @@ def insert_ordered(parent: ET.Element, child: ET.Element) -> None:
 
 def _is_anchored(el: ET.Element) -> bool:
     return el.tag in ANCHORABLE and el.get("lane") not in (None, "", "0")
+
+
+def _fcp_color_to_hex(value: str) -> str:
+    """Final Cut's RGBA ("1 0.9 0.8 1", each 0-1) as hex ("#ffe5cc")."""
+    parts = [float(x) for x in value.split()[:3]]
+    return "#" + "".join(f"{round(max(0.0, min(1.0, v)) * 255):02x}" for v in parts)
 
 
 class EditError(ValueError):
@@ -844,6 +851,182 @@ class Timeline:
             if size:
                 tdef.set("fontSize", f"{size:g}")
         return Report(changes=[f"Updated title {ref}."])
+
+    # ---- captions (titles generated from the transcript) -----------------
+
+    def _id_maker(self, prefix: str):
+        """Fast unique ids for adding many elements at once."""
+        used = self._all_ids()
+        n = 1
+
+        def make() -> str:
+            nonlocal n
+            while f"{prefix}{n}" in used:
+                n += 1
+            used.add(f"{prefix}{n}")
+            return f"{prefix}{n}"
+
+        return make
+
+    def frame_size(self) -> tuple[int, int]:
+        fmt = self.format_el
+        if fmt is None:
+            return 1920, 1080
+        if fmt.get("width") and fmt.get("height"):
+            return int(fmt.get("width")), int(fmt.get("height"))
+        m = re.search(r"(\d{3,4})x(\d{3,4})", fmt.get("name") or "")
+        if m:
+            return int(m.group(1)), int(m.group(2))
+        m = re.search(r"(720|1080|2160)[pi]", fmt.get("name") or "")
+        h = int(m.group(1)) if m else 1080
+        return h * 16 // 9, h
+
+    def _top_lane(self) -> int:
+        used = [int(c.get("lane")) for el in self.items() for c in el if _is_anchored(c)]
+        return max([0] + [u for u in used if u > 0])
+
+    def caption_items(self) -> list[tuple[ET.Element, ET.Element]]:
+        """(title, parent) for every caption Edit Twin added."""
+        return [(c, el) for el in self.items() for c in el
+                if c.tag == "title" and (c.findtext("note") or "") == CAPTION_NOTE]
+
+    def title_fonts(self) -> list[dict]:
+        """Fonts used by titles in the project, most used first."""
+        counts: dict[tuple, int] = {}
+        for title in self.project.iter("title"):
+            for ts in title.findall("text-style-def/text-style"):
+                if ts.get("font"):
+                    key = (ts.get("font"), ts.get("fontFace") or "Regular")
+                    counts[key] = counts.get(key, 0) + 1
+        return [{"family": f, "face": face, "titles": n}
+                for (f, face), n in sorted(counts.items(), key=lambda kv: -kv[1])]
+
+    def remove_captions(self) -> Report:
+        found = self.caption_items()
+        for c, parent in found:
+            parent.remove(c)
+        return Report(changes=[f"Removed {len(found)} captions."] if found else ["No captions to remove."])
+
+    def extract_title_style(self, ref) -> dict:
+        """Read a title the user styled by hand: its font, size, colour, position, and
+        the whole title (with any animation or template) to clone for each caption."""
+        el, _ = self.resolve(ref)
+        if el.tag != "title":
+            raise EditError(f"{ref} is a {el.tag}, not a title")
+        ts = el.find("text-style-def/text-style")
+        out: dict = {}
+        if ts is not None:
+            for key, attr in (("font", "font"), ("face", "fontFace"), ("size", "fontSize"),
+                              ("alignment", "alignment")):
+                if ts.get(attr):
+                    out[key] = float(ts.get(attr)) if key == "size" else ts.get(attr)
+            if ts.get("fontColor"):
+                out["color"] = _fcp_color_to_hex(ts.get("fontColor"))
+        pos = next((p for p in el.findall("param") if p.get("name") == "Position"), None)
+        if pos is not None:
+            out["y"] = float(pos.get("value").split()[1])
+        tpl = copy.deepcopy(el)
+        for c in list(tpl):
+            if _is_anchored(c) or c.tag in MARKER_TAGS or c.tag in RANGE_TAGS or c.tag == "note":
+                tpl.remove(c)
+        refs = [r for r in {sub.get("ref") for sub in tpl.iter()} if r and self.resource(r) is not None]
+        out["template"] = {
+            "title": ET.tostring(tpl, encoding="unicode"),
+            "resources": [ET.tostring(self.resource(r), encoding="unicode") for r in refs],
+            "effect": self.item_name(el) if self.resource(el.get("ref")) is None
+            else self.resource(el.get("ref")).get("name"),
+        }
+        out["frame"] = list(self.frame_size())
+        return out
+
+    def _caption_title(self, style: dict, mapping: dict, new_ts) -> ET.Element:
+        tpl = style.get("template")
+        if tpl:
+            title = ET.fromstring(tpl["title"])
+            for sub in title.iter():
+                if sub.get("ref") in mapping:
+                    sub.set("ref", mapping[sub.get("ref")])
+            for k in ("enabled", "lane", "offset", "duration", "name"):
+                title.attrib.pop(k, None)
+            spans = title.findall("text/text-style")
+            keep_id = spans[0].get("ref") if spans else None
+            text_el = title.find("text")
+            if text_el is None:
+                text_el = ET.SubElement(title, "text")
+            for s in spans[1:]:
+                text_el.remove(s)
+            for d in title.findall("text-style-def"):
+                if d.get("id") != keep_id:
+                    title.remove(d)
+            tdef = title.find("text-style-def")
+            if tdef is None:
+                tdef = ET.SubElement(title, "text-style-def")
+                ET.SubElement(tdef, "text-style")
+            tid = new_ts()
+            tdef.set("id", tid)
+            span = spans[0] if spans else ET.SubElement(text_el, "text-style")
+            span.set("ref", tid)
+        else:
+            title = ET.Element("title", {"ref": self._basic_title_effect(), "start": "3600s"})
+            span = ET.SubElement(ET.SubElement(title, "text"), "text-style", {"ref": ""})
+            tdef = ET.SubElement(title, "text-style-def", {"id": new_ts()})
+            ET.SubElement(tdef, "text-style")
+            span.set("ref", tdef.get("id"))
+        ts = tdef.find("text-style")
+        attrs = {"font": style.get("font"), "fontFace": style.get("face"),
+                 "fontSize": f"{float(style['size']):g}" if style.get("size") else None,
+                 "fontColor": self._color(style["color"]) if style.get("color") else None,
+                 "alignment": style.get("alignment") or (None if tpl else "center")}
+        if style.get("stroke_color"):
+            attrs["strokeColor"] = self._color(style["stroke_color"])
+            attrs["strokeWidth"] = f"{float(style.get('stroke_width') or 2):g}"
+        if style.get("shadow"):
+            attrs.update({"shadowColor": "0 0 0 0.6", "shadowOffset": "3 315", "shadowBlurRadius": "6"})
+        for k, v in attrs.items():
+            if v is not None:
+                ts.set(k, v)
+        if style.get("y") is not None:
+            pos = next((p for p in title.findall("param") if p.get("name") == "Position"), None)
+            if pos is None:
+                pos = ET.Element("param", {"name": "Position", "key": BASIC_TITLE_POSITION_KEY})
+                title.insert(0, pos)
+            x = pos.get("value", "0 0").split()[0]
+            pos.set("value", f"{x} {float(style['y']):g}")
+        ET.SubElement(title, "note").text = CAPTION_NOTE
+        # keep child order valid: params, text, text-style-def, note, then the rest
+        kids = sorted(list(title), key=_rank)
+        for c in list(title):
+            title.remove(c)
+        title.extend(kids)
+        return title
+
+    def add_captions(self, captions: list[dict], style: dict, lane: int | None = None) -> Report:
+        """Place each caption ({start, end, text}, timeline seconds) as a title."""
+        if not captions:
+            raise EditError("No captions to add (no transcript words in that range?)")
+        mapping = self._import_resources(style["template"]["resources"]) if style.get("template") else {}
+        if lane is None:
+            lane = self._top_lane() + 1
+        new_ts = self._id_maker("ts")
+        end_tl = self.origin + self.duration()
+        added = 0
+        for cap in captions:
+            t = self.abs_time(cap["start"])
+            e = min(self.abs_time(cap["end"]), end_tl)
+            if e - t < self.frame:
+                e = t + self.frame
+            host = self.item_at(t)
+            if host is None:
+                continue
+            title = self._caption_title(style, mapping, new_ts)
+            title.set("lane", str(lane))
+            title.set("offset", self.t(self.local_time(host, t)))
+            title.set("duration", self.t(e - t))
+            title.set("name", cap["text"].replace("\n", " ")[:40])
+            title.find("text/text-style").text = cap["text"]
+            insert_ordered(host, title)
+            added += 1
+        return Report(changes=[f"Added {added} captions on lane {lane}."])
 
     # ---- audio / effects -------------------------------------------------
 
