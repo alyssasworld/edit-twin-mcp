@@ -40,11 +40,15 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install ffmpeg
+        timeout-minutes: 8
+        env:
+          DEBIAN_FRONTEND: noninteractive   # no apt prompts that would hang the job
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then
             brew install ffmpeg
           else
-            sudo apt-get update && sudo apt-get install -y ffmpeg libxml2-utils
+            sudo -E apt-get update -q
+            sudo -E apt-get install -y -q --no-install-recommends ffmpeg libxml2-utils
           fi
 
       - name: Install Edit Twin
