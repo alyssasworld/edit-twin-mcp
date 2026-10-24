@@ -181,6 +181,8 @@ python3 -m venv .venv && .venv/bin/pip install -e '.[transcribe]' pytest
 .venv/bin/pytest -q tests     # self-contained: generates its own footage, no Final Cut Pro needed
 ```
 
+The same tests run on GitHub Actions for every pull request (`.github/workflows/tests.yml`), on macOS and Linux. Apple's DTD check only runs locally on a Mac with Final Cut Pro.
+
 ## Support
 
 Edit Twin is a free, as-is side project. Issues and pull requests are welcome, but I can't promise to fix every setup. If it saves you editing time, a ⭐ or a tag on socials (@loveaction) would be nice!
