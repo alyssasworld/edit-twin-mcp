@@ -954,7 +954,7 @@ class Timeline:
         out["frame"] = list(self.frame_size())
         return out
 
-    def _caption_title(self, style: dict, mapping: dict, new_ts) -> ET.Element:
+    def _caption_title(self, style: dict, mapping: dict, new_ts, lines: int = 1) -> ET.Element:
         tpl = style.get("template")
         if tpl:
             title = ET.fromstring(tpl["title"])
@@ -1006,7 +1006,10 @@ class Timeline:
                 pos = ET.Element("param", {"name": "Position", "key": BASIC_TITLE_POSITION_KEY})
                 title.insert(0, pos)
             x = pos.get("value", "0 0").split()[0]
-            pos.set("value", f"{x} {float(style['y']):g}")
+            # a title grows down from its first line, so lift captions of several lines
+            # to keep the last one where a single line sits (and inside the frame)
+            lift = (lines - 1) * float(style.get("line_height") or 1.2 * float(style.get("size") or 50))
+            pos.set("value", f"{x} {round(float(style['y']) + lift, 2):g}")
         ET.SubElement(title, "note").text = CAPTION_NOTE
         # keep child order valid: params, text, text-style-def, note, then the rest
         kids = sorted(list(title), key=_rank)
@@ -1033,7 +1036,7 @@ class Timeline:
             host = self.item_at(t)
             if host is None:
                 continue
-            title = self._caption_title(style, mapping, new_ts)
+            title = self._caption_title(style, mapping, new_ts, cap["text"].count("\n") + 1)
             title.set("lane", str(lane))
             title.set("offset", self.t(self.local_time(host, t)))
             title.set("duration", self.t(e - t))
