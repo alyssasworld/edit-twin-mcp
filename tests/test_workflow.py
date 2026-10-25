@@ -174,6 +174,18 @@ async def run(root: str) -> None:
             assert "look 'warm_vlog'" in rep["saved_to_style"] and "audio chain" in rep["saved_to_style"]
             style = await call("get_style")
             assert style["default_look"] == "warm_vlog" and style["audio"]["loudness"]["amount"] == "40"
+            assert style["silence_long"] is None    # a vertical reel teaches reel pauses only
+
+            # Vlog pause settings are kept apart from the reel ones; stale notes can go
+            style = await call("update_style", {"min_silence": 1.5, "format": "long", "add_note": "old vlog note"})
+            assert style["silence_long"] == {"min_silence": 1.5} and style["silence"]["min_silence"] != 1.5
+            long_sil = await call("find_silences", {"format": "long"})
+            assert long_sil["settings"]["min_silence"] == 1.5
+            assert long_sil["settings"]["threshold_db"] == style["silence"]["threshold_db"]
+            assert (await call("find_silences"))["settings"]["min_silence"] == style["silence"]["min_silence"]
+            style = await call("update_style", {"remove_note": "OLD VLOG"})
+            assert "old vlog note" not in style["notes"]
+            await call("update_style", {"remove_note": "no such note"}, expect_error=True)
 
             # A fresh timeline gets the look and sound automatically
             await call("open_timeline", {"path": raw})
