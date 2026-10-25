@@ -73,7 +73,8 @@ def read_font(path: str) -> list[dict]:
     out = []
     for idx, base in enumerate(_faces(data)):
         try:
-            names = _names(data, _tables(data, base))
+            tables = _tables(data, base)
+            names = _names(data, tables)
         except struct.error:
             continue
         family = names.get(16) or names.get(1)
@@ -81,13 +82,14 @@ def read_font(path: str) -> list[dict]:
             continue
         out.append({"family": family, "face": names.get(17) or names.get(2) or "Regular",
                     "full_name": names.get(4) or family, "postscript": names.get(6),
-                    "path": path, "index": idx})
+                    "path": path, "index": idx, "variable": "fvar" in tables})
     return out
 
 
 @functools.lru_cache(maxsize=1)
-def installed() -> tuple[dict, ...]:
-    seen, out = set(), []
+def _all_faces() -> tuple[dict, ...]:
+    """Every face in every installed font file, including the same name twice."""
+    out = []
     for d in FONT_DIRS:
         d = os.path.expanduser(d)
         if not os.path.isdir(d):
@@ -99,15 +101,30 @@ def installed() -> tuple[dict, ...]:
                 p = os.path.join(root, f)
                 try:
                     for face in read_font(p):
-                        if face["family"].startswith("."):   # macOS hidden system fonts
-                            continue
-                        key = (face["family"], face["face"])
-                        if key not in seen:
-                            seen.add(key)
+                        if not face["family"].startswith("."):   # macOS hidden system fonts
                             out.append(face)
                 except (OSError, struct.error, ValueError):
                     continue
     return tuple(out)
+
+
+@functools.lru_cache(maxsize=1)
+def installed() -> tuple[dict, ...]:
+    seen, out = set(), []
+    for face in _all_faces():
+        key = (face["family"], face["face"])
+        if key not in seen:
+            seen.add(key)
+            out.append(face)
+    return tuple(out)
+
+
+def duplicates(family: str, face: str) -> list[dict]:
+    """Every installed file with this exact family and face, when there's more than one.
+    Final Cut can't tell them apart: with a static and a variable font both called
+    "Marjorie Regular", a title may show garbled letters or fall back to Helvetica."""
+    same = [f for f in _all_faces() if f["family"] == family and squash(f["face"]) == squash(face)]
+    return same if len({f["path"] for f in same}) > 1 else []
 
 
 def squash(s: str) -> str:
@@ -163,6 +180,8 @@ class Metrics:
         hm = t["hmtx"][0]
         # hmtx holds (advance width, left side bearing) pairs
         self.advances = struct.unpack_from(f">{2 * n_hm}H", data, hm)[::2]
+        asc, desc, gap = struct.unpack_from(">hhh", data, t["hhea"][0] + 4)
+        self.line_units = asc - desc + gap
         self.cmap = self._cmap(data, t["cmap"][0])
         self.space = self.width_units(" ") or self.units * 0.25
 
@@ -223,6 +242,10 @@ class Metrics:
     def width(self, text: str, size: float) -> float:
         """Width of text at a font size (same units as the size, i.e. pixels)."""
         return self.width_units(text) * size / self.units
+
+    def line_height(self, size: float) -> float:
+        """Distance from one line of text to the next at a font size."""
+        return self.line_units * size / self.units
 
 
 @functools.lru_cache(maxsize=16)
