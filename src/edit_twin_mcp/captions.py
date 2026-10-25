@@ -17,12 +17,18 @@ import re
 from . import fonts
 from .learn import FILLERS, _norm
 
-# Vertical positions as a fraction of frame height from the centre (up is positive).
-POSITIONS = {"top": 0.38, "upper": 0.25, "middle": 0.0, "center": 0.0, "lower": -0.25, "bottom": -0.4}
+# Final Cut's Basic Title measures font size and position in units where the frame is
+# 1080 tall, whatever the project's resolution (on a 2160x3840 reel a title at the
+# usual one-word size is ~69 units, not ~230 pixels). Sizes and positions below are
+# fractions of that height.
+TITLE_HEIGHT = 1080
+
+# Vertical positions as a fraction of the title height from the centre (up is positive).
+POSITIONS = {"top": 0.38, "upper": 0.31, "middle": 0.0, "center": 0.0, "lower": -0.25, "bottom": -0.4}
 
 BUILTIN_STYLES = {
     "one_word": {
-        "mode": "word", "font": "Helvetica Neue", "face": "Bold", "size_ratio": 0.06,
+        "mode": "word", "font": "Helvetica Neue", "face": "Bold", "size_ratio": 0.0641,
         "color": "#ffffff", "position": "upper", "case": "as_spoken", "punctuation": "strip",
         "max_words": 1,
     },
@@ -54,17 +60,22 @@ def pick_format(width: int, height: int, duration: float) -> str:
     return "short" if height > width or duration < 180 else "long"
 
 
+def title_width(width: int, height: int) -> float:
+    """The frame's width in title units (see TITLE_HEIGHT)."""
+    return width * TITLE_HEIGHT / height
+
+
 def concrete(style: dict, width: int, height: int) -> dict:
-    """Fill in pixel size and vertical position for this frame. Styles saved with
-    size_ratio / a named position scale to any resolution; ones copied from a title
-    keep its exact size and position."""
+    """Fill in title size and vertical position. Styles saved with size_ratio / a named
+    position work at any resolution; ones copied from a title keep its exact size and
+    position."""
     s = dict(style)
     if s.get("size") is None:
-        s["size"] = round(float(s.get("size_ratio") or 0.05) * height)
+        s["size"] = round(float(s.get("size_ratio") or 0.05) * TITLE_HEIGHT, 1)
     if s.get("y") is None and s.get("position") is not None:
         pos = s["position"]
         frac = POSITIONS[pos] if isinstance(pos, str) else float(pos)
-        s["y"] = round(frac * height)
+        s["y"] = round(frac * TITLE_HEIGHT)
     return s
 
 
@@ -164,7 +175,8 @@ def _wrap(words: list[str], style: dict, measure: Measure, limit: float) -> list
 
 def build(words: list[list], style: dict, frame_width: int, end_limit: float,
           skip_fillers: bool = True) -> list[dict]:
-    """words: [[word, start, end], ...] in timeline seconds, in order.
+    """words: [[word, start, end], ...] in timeline seconds, in order; frame_width is
+    in title units (title_width).
     Returns [{"start", "end", "text"}] with no overlaps, ready to place as titles."""
     words = [w for w in words if w[0].strip()]
     if skip_fillers if style.get("skip_fillers") is None else style["skip_fillers"]:

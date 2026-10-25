@@ -88,7 +88,14 @@ def test_styles_resolve_and_scale():
     assert captions.resolve_style(saved, None, "long")[0] == "subtitle"
     assert captions.resolve_style(saved, "reel", "long")[0] == "reel words"
     s = captions.concrete(captions.BUILTIN_STYLES["subtitle"], 3840, 2160)
-    assert s["size"] == round(0.045 * 2160) and s["y"] < 0
+    assert s["size"] == round(0.045 * 1080, 1) and s["y"] < 0
+
+
+def test_reel_default_size_and_position():
+    # matches a one-word caption placed by hand on a 2160x3840 reel in Final Cut
+    s = captions.concrete(captions.BUILTIN_STYLES["one_word"], 2160, 3840)
+    assert s["size"] == 69.2 and s["y"] == 335
+    assert captions.title_width(2160, 3840) == 607.5
 
 
 def test_srt_and_colour():
