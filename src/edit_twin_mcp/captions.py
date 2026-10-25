@@ -53,7 +53,9 @@ BREAK_BEFORE = {"and", "but", "or", "so", "because", "like", "that", "which", "w
 
 _SENTENCE_END = re.compile(r"[.?!…]['\"”’)]*$")
 _SOFT_END = re.compile(r"[,;:–—-]['\"”’)]*$")
-_STRIP = re.compile(r"[^\w'’\s-]|(?<!\w)-|-(?!\w)")
+_STRIP = re.compile(r"[^\w'’\s\ue000\ue001-]|(?<!\w)-|-(?!\w)")
+_COMMA, _QUESTION = "\ue000", "\ue001"   # stand-ins that _STRIP leaves alone
+_DIGIT_COMMA = re.compile(r"(?<=\d),(?=\d{3})")
 
 
 def pick_format(width: int, height: int, duration: float) -> str:
@@ -100,20 +102,44 @@ def resolve_style(saved: dict, name: str | None, fmt: str) -> tuple[str, dict]:
     raise ValueError(f"No caption style {name!r}. Saved styles: {sorted(styles)}")
 
 
+def _strip(text: str, keep_questions: bool = False) -> str:
+    text = _DIGIT_COMMA.sub(_COMMA, text)            # "10,000" stays one number
+    if keep_questions:
+        text = text.replace("?", _QUESTION)
+    text = _STRIP.sub("", text).replace(_COMMA, ",").replace(_QUESTION, "?")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _lower(word: str, keep_caps: dict[str, str]) -> str:
+    """Lowercase, except acronyms the transcript writes in capitals ("AI") and the user's
+    names and words kept capitalised ("YouTube", "Wi-Fi")."""
+    m = re.match(r"^(\W*)(.*?)(\W*)$", word)
+    core = m.group(2)
+    if _norm(core) in keep_caps:
+        core = keep_caps[_norm(core)]
+    elif not (len(re.sub(r"\W", "", core)) > 1 and core.isupper()):
+        core = core.lower()
+    return m.group(1) + core + m.group(3)
+
+
 def text_of(words: list[str], style: dict) -> str:
     text = " ".join(words)
-    if style.get("punctuation") == "strip":
-        text = re.sub(r"\s+", " ", _STRIP.sub("", text)).strip()
+    punct = style.get("punctuation")
+    if punct == "strip":
+        text = _strip(text)
+    elif punct == "questions":
+        text = _strip(text, keep_questions=True)
     case = style.get("case", "as_spoken")
     if case == "lower":
-        text = text.lower()
+        keep = {_norm(w): w for w in style.get("keep_caps") or []}
+        text = " ".join(_lower(w, keep) for w in text.split(" "))
     elif case == "upper":
         text = text.upper()
     return text
 
 
 def apply_fixes(words: list[list], fixes: dict[str, str] | None) -> list[list]:
-    """Whole-word replacements for words the transcript got wrong ("gorge" -> "gorg")."""
+    """Whole-word replacements for words the transcript got wrong ("cloud" -> "Claude")."""
     if not fixes:
         return words
     table = {_norm(k): v for k, v in fixes.items()}
@@ -173,16 +199,48 @@ def _wrap(words: list[str], style: dict, measure: Measure, limit: float) -> list
     return [text_of(c, style) for c in out]
 
 
+def _join_thousands(words: list[list]) -> list[list]:
+    """The transcript sometimes splits "10,000" into "10" and "000"; put it back together."""
+    out: list[list] = []
+    for w in words:
+        if out and re.fullmatch(r"\d{3}\W*", w[0]) and re.fullmatch(r"\d{1,3}(,\d{3})*", out[-1][0]):
+            out[-1] = [out[-1][0] + "," + w[0], out[-1][1], w[2]]
+        else:
+            out.append(list(w))
+    return out
+
+
+def _join_names(words: list[list], keep_caps: list[str] | None) -> list[list]:
+    """Put a hyphenated name the user keeps ("Wi-Fi") back together when the
+    transcript heard it as separate words, so it shows as one caption."""
+    names = [n for n in keep_caps or [] if "-" in n]
+    for name in names:
+        parts = [_norm(p) for p in name.split("-")]
+        out: list[list] = []
+        i = 0
+        while i < len(words):
+            run = words[i:i + len(parts)]
+            if len(run) == len(parts) and [_norm(w[0]) for w in run] == parts:
+                tail = re.search(r"\W*$", run[-1][0]).group(0)
+                out.append([name + tail, run[0][1], run[-1][2]])
+                i += len(parts)
+            else:
+                out.append(words[i])
+                i += 1
+        words = out
+    return words
+
+
 def build(words: list[list], style: dict, frame_width: int, end_limit: float,
           skip_fillers: bool = True) -> list[dict]:
     """words: [[word, start, end], ...] in timeline seconds, in order; frame_width is
     in title units (title_width).
     Returns [{"start", "end", "text"}] with no overlaps, ready to place as titles."""
-    words = [w for w in words if w[0].strip()]
+    words = _join_names(_join_thousands([w for w in words if w[0].strip()]), style.get("keep_caps"))
     if skip_fillers if style.get("skip_fillers") is None else style["skip_fillers"]:
         words = [w for w in words if _norm(w[0]) not in FILLERS]
-    if style.get("punctuation") == "strip":
-        words = [w for w in words if text_of([w[0]], style)]
+    if style.get("punctuation") in ("strip", "questions"):
+        words = [w for w in words if text_of([w[0]], style).strip("?")]
     if not words:
         return []
 
