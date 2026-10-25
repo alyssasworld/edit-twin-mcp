@@ -17,15 +17,15 @@ Use the `edit-twin` MCP tools. The user's original project is never modified: th
 
 ## 2. Analyse (change nothing yet)
 1. `transcribe`, with `vocabulary` set to names and jargon likely in the video.
-2. `find_repeats`: stutters, retakes and um/uh fillers. For each retake, compare the takes and choose. Keep the one with clearer delivery, no stumbles and a clean ending; if they're equal, keep the later take. When removing a retake, also drop a leftover connector ("and", "so") at the start of the kept take if it no longer reads naturally.
+2. `find_repeats`: stutters, retakes and um/uh fillers. It doesn't catch everything: read the transcript (`include_words`) sentence by sentence for false starts and abandoned fragments ("she wanted her… and as well as that"), and for gaps of ~0.3s or more between words where the transcript missed an um or a breath. For each retake, compare the takes and choose. Keep the one with clearer delivery, no stumbles and a clean ending; if they're equal, keep the later take. When removing a retake, also drop a leftover connector ("and", "so") at the start of the kept take if it no longer reads naturally.
 3. Pauses, depending on format:
-   - **Reel**: `find_silences` with the saved defaults.
-   - **Vlog**: `find_silences` with looser overrides (`min_silence` 0.6, `keep_after_speech` 0.15, `keep_before_speech` 0.15), and only propose pauses inside talking sections (between transcript words). Never cut silent stretches that are B-roll, scenery, music or reaction shots; use `get_timeline` and `preview_frame` when unsure.
+   - **Reel**: `find_silences` with `format` "short" (the saved reel settings).
+   - **Vlog**: `find_silences` with `format` "long". If `get_style` has no `silence_long` yet (no vlog learned), add looser overrides (`min_silence` 0.6, `keep_after_speech` 0.15, `keep_before_speech` 0.15); once it exists, use it as saved. Only propose pauses inside talking sections (between transcript words). Never cut silent stretches that are B-roll, scenery, music or reaction shots; use `get_timeline` and `preview_frame` when unsure.
 4. **Stop and show a short plan**: retakes (quote both takes, say which you'd keep and why), how many fillers, how many pauses and how many seconds they add up to, and the expected new length. Wait for the user's OK or changes.
 
 ## 3. Cut (after approval)
 1. `cut_ranges` for the approved retakes and fillers.
-2. Reels: `remove_silences` with the saved defaults. Vlogs: `cut_ranges` with only the approved pause ranges.
+2. Reels: `remove_silences` with `format` "short". Vlogs: `cut_ranges` with only the approved pause ranges.
 3. Reels: check that the first ~3 seconds work as a hook, i.e. the first words state the topic or a surprising claim. If a stronger hook line comes later, suggest it, but don't move it without asking. Flag it if the reel runs over 90 seconds.
 
 ## 4. Look and sound
@@ -37,7 +37,7 @@ Use the `edit-twin` MCP tools. The user's original project is never modified: th
 1. `validate_timeline`, then `render_preview`. Tell the user where the preview is and the new length.
 2. `send_to_final_cut` with the project name "<original name> (rough cut)".
 3. Summarise in a few lines: what was cut (retakes, fillers, pauses, seconds saved) and the look and sound applied.
-4. Finish by suggesting that, if they polish the edit by hand, they ask Claude to `learn_from_edit` (with `save=true` and `look_name`) so the next rough cut matches their style. For the first vlog after reels, run it with `save=false` and record the suggested vlog pause settings with `update_style` `add_note`, so the reel defaults aren't overwritten.
+4. Finish by suggesting that, if they polish the edit by hand, they ask Claude to `learn_from_edit` (with `save=true` and `look_name`) so the next rough cut matches their style. Pass `format` ("short" or "long") so a vlog's pause settings are saved separately from the reel ones.
 
 ## Rules
 - Never change anything before the user approves the plan in step 2.4.
