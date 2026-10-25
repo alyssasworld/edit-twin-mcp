@@ -643,9 +643,22 @@ def save_caption_style(name: str, mode: Literal["word", "line"] | None = None,
                             f"{'one-word' if s['mode'] == 'word' else 'subtitle'} captions ({name})")
     style.save(WORK_DIR, st)
     out = {"saved": name, "style": captions.summary(s), "defaults": st["captions"]["default"]}
+    notes += _font_warnings(s)
     if notes:
         out["notes"] = notes
     return out
+
+
+def _font_warnings(s: dict) -> list[str]:
+    from . import fonts
+
+    same = fonts.duplicates(s["font"], s.get("face") or "Regular") if s.get("font") else []
+    if not same:
+        return []
+    files = ", ".join(os.path.basename(f["path"]) + (" (variable)" if f["variable"] else "") for f in same)
+    return [f"{s['font']} {s.get('face') or 'Regular'} is installed more than once ({files}). Final Cut can pick "
+            "the wrong one and show garbled letters or Helvetica; keep one file (usually the static one) "
+            "and restart Final Cut."]
 
 
 def _build_captions(style_name, fmt, start, end, fixes, language, vocabulary):
@@ -656,7 +669,8 @@ def _build_captions(style_name, fmt, start, end, fixes, language, vocabulary):
     name, s = captions.resolve_style(style.load(WORK_DIR)["captions"], style_name, fmt)
     w, h = tl.frame_size()
     s = captions.concrete(s, w, h)
-    warnings = []
+    s["line_height"] = captions.line_height(s)
+    warnings = _font_warnings(s)
     if s.get("frame") and list(s["frame"]) != [w, h]:
         warnings.append(f"Caption style '{name}' was made on a {s['frame'][0]}x{s['frame'][1]} project and this one "
                         f"is {w}x{h}; check its size and position in Final Cut.")
@@ -677,7 +691,8 @@ def add_captions(style_name: str | None = None, format: Literal["auto", "short",
     CURRENT timeline (run after cutting). Each caption is a title on its own lane above
     everything, so it isn't affected by an adjustment-clip look. style_name: a saved caption
     style (default: the user's default for the format; format auto = short if vertical or
-    under 3 minutes). fixes: whole-word corrections for misheard words {"cloud": "Claude"};
+    under 3 minutes). fixes: corrections for misheard words or phrases
+    {"cloud": "Claude", "is it's": "is. It's"};
     vocabulary helps the transcript spell names. dry_run=True returns the captions without
     adding them, to check wording and line breaks first. replace_existing removes captions
     added before (only within start/end if given). Fix a single caption with edit_title."""
