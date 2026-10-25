@@ -649,7 +649,7 @@ def _build_captions(style_name, fmt, start, end, fixes, language, vocabulary):
     if not words:
         raise EditError("No transcript words in that range")
     limit = end if end is not None else secs(tl.duration())
-    return name, fmt, s, captions.build(words, s, w, limit), warnings
+    return name, fmt, s, captions.build(words, s, captions.title_width(w, h), limit), warnings
 
 
 @tool
@@ -727,7 +727,7 @@ def export_srt(output_path: str | None = None, style_name: str | None = None,
     words = captions.apply_fixes(_timeline_words(), fixes)
     if not words:
         raise EditError("No transcript words")
-    caps = captions.build(words, s, tl.frame_size()[0], secs(tl.duration()))
+    caps = captions.build(words, s, captions.title_width(*tl.frame_size()), secs(tl.duration()))
     out = output_path or os.path.join(WORK_DIR, f"{_safe(tl.project.get('name'))}.srt")
     with open(os.path.expanduser(out), "w") as fh:
         fh.write(captions.to_srt(caps))
