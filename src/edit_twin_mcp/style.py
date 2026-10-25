@@ -1,7 +1,8 @@
 """Your editing style: defaults the tools use, learned from your own edits.
 
 Stored as JSON in the working folder:
-  style.json          cut tightness, audio chain, default look, notes
+  style.json          cut tightness, audio chain, default look, caption styles,
+                      the fonts you use, notes
   looks/<name>.json   saved adjustment-clip looks (e.g. warm_vlog)
 """
 
@@ -24,6 +25,10 @@ DEFAULT_STYLE = {
     "remove_stutters": True,
     "audio": None,          # saved audio chain (see learn_from_edit / save_audio_style)
     "default_look": None,   # name of a saved look to apply after cutting
+    # caption styles by name, and which one to use for short (vertical) and long videos
+    "captions": {"styles": {}, "default": {"short": None, "long": None}},
+    # fonts the user works with: [{family, face, used_for: [...]}]
+    "fonts": [],
     "notes": [],
 }
 
@@ -56,6 +61,16 @@ def save(work_dir: str, style: dict) -> str:
     with open(p, "w") as fh:
         json.dump(style, fh, indent=2)
     return p
+
+
+def remember_font(st: dict, family: str, face: str | None = None, used_for: str | None = None) -> None:
+    """Add a font to the user's fonts (or note another use for it)."""
+    entry = next((f for f in st["fonts"] if f["family"] == family and f.get("face") == face), None)
+    if entry is None:
+        entry = {"family": family, "face": face, "used_for": []}
+        st["fonts"].append(entry)
+    if used_for and used_for not in entry["used_for"]:
+        entry["used_for"].append(used_for)
 
 
 def _slug(name: str) -> str:

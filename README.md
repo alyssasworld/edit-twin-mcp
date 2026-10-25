@@ -20,6 +20,17 @@ Open a project in Final Cut Pro, then in Claude Code say:
 
 It adapts to the format. **Reels and shorts** get tight jump cuts and a check that the first 3 seconds work as a hook. **Landscape vlogs** get looser pacing, and quiet B-roll, scenery and music moments are never cut as "silence".
 
+## Captions 💬
+
+> *caption my open project*
+
+Captions are timed to every word on your edit and added as Final Cut Pro titles, in **your** caption styles:
+
+- **Short form**: one word (or a few) pops on as you say it, e.g. in a display font at the top of a vertical reel.
+- **Long form**: subtitle lines near the bottom, measured in your font so each line fits the frame and stays comfortable to read.
+
+Set a style up once, either by **styling one title by hand** in Final Cut (Edit Twin copies its font, size, colour, position and any animation exactly), or by describing it (*"one word at a time, Futura, lowercase, near the top, for my reels"*). Any font installed on your Mac works; Edit Twin reads the real font names from the font files and remembers the fonts you use, so next time *"caption it"* is enough. Misheard words are fixed before anything is added, and `export_srt` writes an `.srt` for YouTube closed captions.
+
 ## How it learns your style ✨
 
 After you polish an Edit Twin rough cut by hand, say:
@@ -31,11 +42,12 @@ Edit Twin compares its version with yours, frame by frame against the original f
 - which **words or retakes** you removed or put back,
 - how much **breathing room** you leave before and after words,
 - your **audio chain** (gain, Loudness, Noise Removal, EQ),
-- the **look** on your adjustment clip.
+- the **look** on your adjustment clip,
+- the **fonts** in your titles.
 
 It then **calibrates its pause detection to match your own trims** and saves everything as your style. On the reel Edit Twin was developed with, the calibrated settings overlapped with the creator's own hand trims **72%**, compared with **13%** for the old loose settings. The rest were creative word-level choices, and those you keep making yourself.
 
-Your style lives on your Mac in `~/Movies/Edit Twin/style.json` and `~/Movies/Edit Twin/looks/`.
+Your style (including caption styles and fonts) lives on your Mac in `~/Movies/Edit Twin/style.json` and `~/Movies/Edit Twin/looks/`.
 
 ## Install
 
@@ -86,6 +98,9 @@ If your footage is on an external drive, keep it plugged in while editing. macOS
 - *"Save the look on my adjustment clip as `warm_vlog` and use it by default."*
 - *"Put coffee.mov over 0:42 for 3 seconds and add music.m4a under everything at −18 dB."*
 - *"Add chapter markers at each topic change."*
+- *"Caption this reel one word at a time in Futura, lowercase, near the top. Make that my reel style."*
+- *"Save the title at 0:03 as my vlog subtitle style."*
+- *"Caption it"* (uses your saved style for the format) · *"Export an SRT for YouTube."*
 - *"How loud is this edit?"*
 - *"Learn from my edit."*
 
@@ -113,6 +128,7 @@ Final Cut Pro ──Export XML──▶ Edit Twin edits the timeline ──Impor
 | Open & read | `find_fcpxml_files`, `open_timeline`, `get_timeline`, `list_markers`, `probe_media` |
 | Speech & sound | `transcribe`, `find_repeats`, `find_silences`, `remove_silences`, `measure_loudness`, `normalize_audio`, `set_volume` |
 | Your style | `get_style`, `update_style`, `learn_from_edit`, `save_look`, `apply_look`, `save_audio_style`, `apply_audio_style` |
+| Captions | `add_captions`, `remove_captions`, `save_caption_style`, `list_fonts`, `export_srt` |
 | Edit | `cut_ranges`, `keep_ranges`, `split_clip`, `delete_clip`, `trim_clip`, `move_clip`, `add_marker`, `remove_markers`, `add_title`, `edit_title`, `insert_media`, `enable_clip`, `copy_effects`, `remove_effects`, `fit_to_timeline`, `undo`, `redo` |
 | Check & finish | `validate_timeline`, `preview_frame`, `render_preview`, `save_timeline`, `send_to_final_cut` |
 
@@ -125,6 +141,7 @@ Final Cut Pro ──Export XML──▶ Edit Twin edits the timeline ──Impor
 - Edits apply to the **primary storyline**. Speed-changed (retimed) clips aren't cut inside. Multicam, compound and synced clips are skipped by pause and silence detection.
 - A **look** is saved as the effects stack on an adjustment clip. Paid plugins (e.g. colour plugins) and LUT files must be installed on the Mac that uses it.
 - `render_preview` is a rough preview (straight cuts, no effects or titles). The real result is in Final Cut Pro.
+- **Captions** are regular titles (one per caption), so they're easy to tweak but a long video can have hundreds of them. A caption style described in words uses Final Cut's Basic Title; copy a title you styled yourself for animation or effects. A style copied from a title keeps that title's exact size and position, so check it when using it on a project with a different resolution.
 - Whisper occasionally stretches word timings over pauses, so always check the plan before approving.
 
 ## Files and disk space
@@ -141,7 +158,8 @@ Edit Twin never changes your Final Cut Pro library or media directly. It writes:
 | macOS temp folder | screenshots and preview frames (`edit_twin_*.png`) | macOS clears these |
 | `~/.cache/huggingface/` | the speech model (~1.5 GB) | yes (it's downloaded again when needed) |
 | `.venv/` in the cloned folder | Python and packages (~1 GB) | removes Edit Twin |
-| `~/.claude/skills/edit-twin-rough-cut/` | the rough-cut skill | yes |
+| `~/.claude/skills/edit-twin-rough-cut/`, `edit-twin-captions/` | the rough-cut and captions skills | yes |
+| `~/Movies/Edit Twin/*.srt` | subtitle files from `export_srt` | yes |
 
 Settings you can pass as environment variables when registering:
 
@@ -168,7 +186,7 @@ claude mcp add --scope user -e EDIT_TWIN_DIR="/Volumes/MyDrive/Edit Twin" -e HF_
 
 ```bash
 claude mcp remove edit-twin --scope user
-rm -rf ~/.claude/skills/edit-twin-rough-cut
+rm -rf ~/.claude/skills/edit-twin-rough-cut ~/.claude/skills/edit-twin-captions
 rm -rf /path/to/edit-twin-mcp            # the cloned folder, including .venv
 rm -rf ~/.cache/huggingface/hub/models--mlx-community--whisper-large-v3-turbo   # Apple Silicon model
 ```

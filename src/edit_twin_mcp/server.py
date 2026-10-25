@@ -42,8 +42,9 @@ Times are seconds from the start of the timeline (decimals OK) or timecode "MM:S
 Clip refs: "4" = the 5th clip in the primary storyline, "4.0" = first connected item on it
 (B-roll, title, music). Check `get_timeline` for refs after any edit, since indexes shift.
 The user's style (get_style) is learned from their own hand edits: use its defaults for
-pause removal, apply_look for their colour look and apply_audio_style for their dialogue
-sound. After they finish an edit by hand, offer learn_from_edit.
+pause removal, apply_look for their colour look, apply_audio_style for their dialogue
+sound and add_captions with their saved caption styles (save_caption_style, list_fonts).
+After they finish an edit by hand, offer learn_from_edit.
 Before destructive bulk edits (e.g. remove_silences) run the matching dry-run tool
 (`find_silences`) and tell the user what will change. Use `preview_frame` or
 `render_preview` to check results. Live app tools (`fcp_*`) only work on the Mac running
@@ -452,15 +453,17 @@ def transcribe(start: float | None = None, end: float | None = None, include_wor
                    "the next kept word; keep ~0.1s of air."}
 
 
-def _timeline_words() -> list[list]:
+def _timeline_words(language: str | None = None, vocabulary: str | None = None,
+                    start: float | None = None, end: float | None = None) -> list[list]:
     from . import transcribe as tr
 
     tl = _tl()
     words = []
     for f in tl.storyline_media():
-        data = tr.transcribe_file(f, os.path.join(WORK_DIR, ".transcripts"))
-        for seg in tl.map_transcript(f, data, include_words=True):
+        data = tr.transcribe_file(f, os.path.join(WORK_DIR, ".transcripts"), language, vocabulary)
+        for seg in tl.map_transcript(f, data, include_words=True, start=start, end=end):
             words += seg.get("words", [])
+    words = [w for w in words if (start is None or w[2] > start) and (end is None or w[1] < end)]
     words.sort(key=lambda w: w[1])
     return words
 
@@ -512,16 +515,248 @@ def fit_to_timeline(ref: str | None = None, name_contains: str | None = None) ->
 
 
 # --------------------------------------------------------------------------- #
+#  Captions
+# --------------------------------------------------------------------------- #
+
+@tool
+def list_fonts(query: str | None = None) -> dict:
+    """Fonts: the ones the user works with (saved in their style) and, with query, the
+    installed fonts matching it ("avenir", "futura") with their exact family and face
+    names as Final Cut Pro needs them. Use it to turn a font the user names into the
+    real name before save_caption_style."""
+    from . import fonts
+
+    st = style.load(WORK_DIR)
+    out: dict = {"yours": st["fonts"]}
+    if query:
+        found = fonts.search(query)
+        out["installed"] = [{"family": f["family"], "faces": f["faces"]} for f in found[:20]]
+        if not found:
+            out["note"] = (f"No installed font matches {query!r}. Install it (double-click the font "
+                           "file > Install) and try again.")
+    else:
+        out["installed_count"] = len({f["family"] for f in fonts.installed()})
+    return out
+
+
+def _caption_format(fmt: str) -> str:
+    from . import captions
+
+    if fmt != "auto":
+        return fmt
+    tl = _tl()
+    w, h = tl.frame_size()
+    return captions.pick_format(w, h, secs(tl.duration()))
+
+
+@tool
+def save_caption_style(name: str, mode: Literal["word", "line"] | None = None,
+                       from_title: str | None = None, font: str | None = None, face: str | None = None,
+                       size: float | None = None, color: str | None = None,
+                       position: Literal["top", "upper", "middle", "lower", "bottom"] | None = None,
+                       case: Literal["as_spoken", "lower", "upper"] | None = None,
+                       punctuation: Literal["keep", "strip", "questions"] | None = None,
+                       keep_caps: list[str] | None = None, max_words: int | None = None, max_lines: int | None = None,
+                       max_width: float | None = None, stroke_color: str | None = None,
+                       stroke_width: float | None = None, shadow: bool | None = None,
+                       default_for: Literal["short", "long"] | None = None) -> dict:
+    """Save (or update) a named caption style in the user's style, e.g. "reel words" or
+    "vlog subtitles". Best: from_title = ref of a title the user styled by hand in the open
+    timeline ("2.0"); its font, size, colour, position and any animation are copied exactly.
+    Or describe it: mode "word" = one word (max_words) at a time as it's said, for short form;
+    "line" = subtitle lines that fit the frame (max_width = fraction of frame width, max_lines),
+    for long form. font: any installed font, loosely named ("avenir next"); it's matched to the
+    exact name. position/size without from_title scale to any resolution. default_for makes
+    it the style add_captions uses for short (vertical) or long videos. The font is remembered
+    as one of the user's fonts. punctuation "questions" strips all but question marks.
+    keep_caps: names and words written as given even when case is "lower" ("YouTube",
+    "Wi-Fi"); added to the style's list. Acronyms the transcript writes in capitals
+    ("AI") are always kept."""
+    from . import captions, fonts
+
+    st = style.load(WORK_DIR)
+    styles = st["captions"]["styles"]
+    mode = mode or (styles.get(name) or {}).get("mode") or {"short": "word", "long": "line"}.get(default_for or "")
+    if name in styles:
+        s = dict(styles[name])
+    elif mode:
+        s = dict(captions.BUILTIN_STYLES["one_word" if mode == "word" else "subtitle"])
+    elif from_title:
+        s = dict(captions.BUILTIN_STYLES["one_word"])
+    else:
+        raise EditError("Say which kind of caption this is: mode 'word' (short form) or 'line' (long form)")
+    if mode:
+        s["mode"] = mode
+    notes = []
+    if from_title:
+        tl = _tl()
+        learned = tl.extract_title_style(from_title)
+        # the title's own look wins: drop size, position and text effects from the base style
+        for k in ("size_ratio", "position", "y", "size", "shadow", "stroke_color", "stroke_width"):
+            s.pop(k, None)
+        s.update(learned)
+        if learned.get("font") and not fonts.resolve(learned["font"], learned.get("face")):
+            notes.append(f"The title's font {learned['font']!r} isn't installed on this Mac, so lines can't be "
+                         "measured exactly; Final Cut will substitute a font.")
+    if font:
+        found = fonts.resolve(font, face)
+        if not found:
+            near = [f["family"] for w in font.split() if len(w) > 3 for f in fonts.search(w)][:8]
+            raise EditError(f"Font {font!r} isn't installed. Similar installed fonts: {near or 'none'}. "
+                            "Use list_fonts to search.")
+        if face and fonts.squash(found["face"]) != fonts.squash(face):
+            faces = fonts.search(found["family"])[0]["faces"]
+            raise EditError(f"{found['family']} has no {face!r} face. Faces: {faces}")
+        s["font"], s["face"] = found["family"], found["face"]
+    elif face:
+        s["face"] = face
+    if size is not None:
+        s.pop("size_ratio", None)
+        s["size"] = size
+        if _state["tl"] is not None:
+            s["frame"] = list(_tl().frame_size())
+    if position is not None:
+        s.pop("y", None)
+        s["position"] = position
+    if keep_caps:
+        known = {w.lower(): w for w in s.get("keep_caps") or []}
+        known.update({w.lower(): w for w in keep_caps})
+        s["keep_caps"] = sorted(known.values(), key=str.lower)
+    for k, v in {"color": color, "case": case, "punctuation": punctuation, "max_words": max_words,
+                 "max_lines": max_lines, "max_width": max_width, "stroke_color": stroke_color,
+                 "stroke_width": stroke_width, "shadow": shadow}.items():
+        if v is not None:
+            s[k] = v
+    styles[name] = s
+    if default_for:
+        st["captions"]["default"][default_for] = name
+    if s.get("font"):
+        style.remember_font(st, s["font"], s.get("face"),
+                            f"{'one-word' if s['mode'] == 'word' else 'subtitle'} captions ({name})")
+    style.save(WORK_DIR, st)
+    out = {"saved": name, "style": captions.summary(s), "defaults": st["captions"]["default"]}
+    if notes:
+        out["notes"] = notes
+    return out
+
+
+def _build_captions(style_name, fmt, start, end, fixes, language, vocabulary):
+    from . import captions
+
+    tl = _tl()
+    fmt = _caption_format(fmt)
+    name, s = captions.resolve_style(style.load(WORK_DIR)["captions"], style_name, fmt)
+    w, h = tl.frame_size()
+    s = captions.concrete(s, w, h)
+    warnings = []
+    if s.get("frame") and list(s["frame"]) != [w, h]:
+        warnings.append(f"Caption style '{name}' was made on a {s['frame'][0]}x{s['frame'][1]} project and this one "
+                        f"is {w}x{h}; check its size and position in Final Cut.")
+    words = captions.apply_fixes(_timeline_words(language, vocabulary, start, end), fixes)
+    if not words:
+        raise EditError("No transcript words in that range")
+    limit = end if end is not None else secs(tl.duration())
+    return name, fmt, s, captions.build(words, s, captions.title_width(w, h), limit), warnings
+
+
+@tool
+def add_captions(style_name: str | None = None, format: Literal["auto", "short", "long"] = "auto",
+                 start: float | None = None, end: float | None = None,
+                 fixes: dict[str, str] | None = None, dry_run: bool = False,
+                 replace_existing: bool = True, language: str | None = None,
+                 vocabulary: str | None = None) -> dict:
+    """Caption the edit from the transcript, timed to the words as they're said on the
+    CURRENT timeline (run after cutting). Each caption is a title on its own lane above
+    everything, so it isn't affected by an adjustment-clip look. style_name: a saved caption
+    style (default: the user's default for the format; format auto = short if vertical or
+    under 3 minutes). fixes: whole-word corrections for misheard words {"cloud": "Claude"};
+    vocabulary helps the transcript spell names. dry_run=True returns the captions without
+    adding them, to check wording and line breaks first. replace_existing removes captions
+    added before (only within start/end if given). Fix a single caption with edit_title."""
+    from . import captions
+
+    name, fmt, s, caps, warnings = _build_captions(style_name, format, start, end, fixes, language, vocabulary)
+    out: dict = {"style": name, "format": fmt, "count": len(caps)}
+    if warnings:
+        out["warnings"] = warnings
+    if dry_run:
+        out["captions"] = caps[:300]
+        if len(caps) > 300:
+            out["note"] = "First 300 shown; use start/end to see the rest."
+        return out
+    tl = _tl()
+
+    def run():
+        rep = None
+        if replace_existing:
+            old = [(c, p) for c, p in tl.caption_items()
+                   if (start is None or tl.rel(tl.timeline_time(c, tl.start(c), parent=p)) >= start - 0.01)
+                   and (end is None or tl.rel(tl.timeline_time(c, tl.start(c), parent=p)) < end)]
+            for c, p in old:
+                p.remove(c)
+            if old:
+                rep = f"Replaced {len(old)} earlier captions."
+        lane = None
+        remaining = tl.caption_items()
+        if remaining:
+            lane = int(remaining[0][0].get("lane"))
+        r = tl.add_captions(caps, s, lane)
+        if rep:
+            r.changes.insert(0, rep)
+        return r
+
+    out.update(_edit(run))
+    out["first_captions"] = caps[:6]
+    out["style_used"] = captions.summary(s)
+    out["tip"] = ("Final Cut titles don't show in preview_frame/render_preview; after send_to_final_cut "
+                  "use fcp_screenshot to check the look.")
+    return out
+
+
+@tool
+def remove_captions() -> dict:
+    """Remove all captions added by add_captions (other titles are left alone)."""
+    return _edit(_tl().remove_captions)
+
+
+@tool
+def export_srt(output_path: str | None = None, style_name: str | None = None,
+               fixes: dict[str, str] | None = None, max_lines: int = 2) -> dict:
+    """Write an .srt subtitle file of the current edit (e.g. to upload to YouTube as closed
+    captions). Lines are broken using a long-form caption style (default: the user's long
+    style) with up to max_lines lines each."""
+    from . import captions
+
+    tl = _tl()
+    st = style.load(WORK_DIR)
+    name, s = captions.resolve_style(st["captions"], style_name, "long")
+    s = captions.concrete({**s, "mode": "line", "max_lines": max_lines}, *tl.frame_size())
+    words = captions.apply_fixes(_timeline_words(), fixes)
+    if not words:
+        raise EditError("No transcript words")
+    caps = captions.build(words, s, captions.title_width(*tl.frame_size()), secs(tl.duration()))
+    out = output_path or os.path.join(WORK_DIR, f"{_safe(tl.project.get('name'))}.srt")
+    with open(os.path.expanduser(out), "w") as fh:
+        fh.write(captions.to_srt(caps))
+    return {"saved": os.path.expanduser(out), "count": len(caps), "style": name}
+
+
+# --------------------------------------------------------------------------- #
 #  Your style: looks, audio chain, learning from your own edits
 # --------------------------------------------------------------------------- #
 
 @tool
 def get_style() -> dict:
     """The user's saved editing style: pause-cut tightness, audio chain, default look,
-    saved looks and notes learned from their edits. Read this before a rough cut."""
+    saved looks, caption styles, the fonts they use and notes learned from their edits.
+    Read this before a rough cut or captioning."""
+    from . import captions
+
     st = style.load(WORK_DIR)
-    out = {k: v for k, v in st.items() if k != "audio"}
+    out = {k: v for k, v in st.items() if k not in ("audio", "captions")}
     out["audio"] = st["audio"]["summary"] if st.get("audio") else None
+    out["caption_styles"] = {k: captions.summary(v) for k, v in st["captions"]["styles"].items()}
+    out["caption_defaults"] = st["captions"]["default"]
     out["saved_looks"] = style.list_looks(WORK_DIR)
     out["file"] = style.style_path(WORK_DIR)
     return out
@@ -638,7 +873,8 @@ def learn_from_edit(your_version: str | None = None, claude_version: str | None 
     your_version: their exported .fcpxml/.fcpxmld (default: export the project open in Final
     Cut now). claude_version: what Claude sent (default: the last one sent for that project).
     Reports what they removed or restored (with the words), how tight they trim pauses,
-    their audio chain and adjustment-clip look, and pause settings calibrated to match them.
+    their audio chain and adjustment-clip look, the fonts in their titles, and pause settings
+    calibrated to match them.
     save=True stores the pause settings, audio chain and look (named look_name, e.g. the preset
     they used, e.g. "warm_vlog") as their defaults."""
     from .learn import compare
@@ -661,6 +897,9 @@ def learn_from_edit(your_version: str | None = None, claude_version: str | None 
             pass
     report = compare(claude, hand, transcripts, calibrate=True)
     report["files"] = {"yours": your_version, "claude": claude_version}
+    title_fonts = hand.title_fonts()
+    if title_fonts:
+        report["your_title_fonts"] = title_fonts
     if save:
         st = style.load(WORK_DIR)
         saved = []
@@ -678,6 +917,10 @@ def learn_from_edit(your_version: str | None = None, claude_version: str | None 
             style.save_look(WORK_DIR, name, look)
             st["default_look"] = name
             saved.append(f"look '{name}'")
+        for f in title_fonts:
+            style.remember_font(st, f["family"], f["face"], "titles")
+        if title_fonts:
+            saved.append("fonts " + ", ".join(sorted({f["family"] for f in title_fonts})))
         if report.get("often_removed_words"):
             st["notes"].append("Often removes these words when they start a sentence or follow a pause: "
                                + ", ".join(report["often_removed_words"]))
