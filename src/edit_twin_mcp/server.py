@@ -379,27 +379,34 @@ def insert_media(path: str, time: str | None = None,
     return _edit(_tl().insert_media, path, time, mode, source_in, duration, lane, role)
 
 
-def _silence_args(threshold_db, min_silence, keep_after_speech, keep_before_speech) -> dict:
-    """Fill unspecified pause settings from the saved style (learned from your edits)."""
-    st = style.load(WORK_DIR)["silence"]
-    return {
-        "threshold_db": st["threshold_db"] if threshold_db is None else threshold_db,
-        "min_silence": st["min_silence"] if min_silence is None else min_silence,
-        "keep_after_speech": st["keep_after_speech"] if keep_after_speech is None else keep_after_speech,
-        "keep_before_speech": st["keep_before_speech"] if keep_before_speech is None else keep_before_speech,
-    }
+def _pause_key(fmt: str) -> str:
+    """Which saved pause settings a video uses: "silence" (reels / short) or "silence_long"."""
+    return "silence_long" if fmt == "long" else "silence"
+
+
+def _silence_args(threshold_db, min_silence, keep_after_speech, keep_before_speech, fmt="auto") -> dict:
+    """Fill unspecified pause settings from the saved style (learned from your edits), using
+    the long-form settings for long videos once they've been learned."""
+    st = style.load(WORK_DIR)
+    saved = {**st["silence"], **(st.get(_pause_key(_caption_format(fmt))) or {})}
+    given = {"threshold_db": threshold_db, "min_silence": min_silence,
+             "keep_after_speech": keep_after_speech, "keep_before_speech": keep_before_speech}
+    return {k: saved[k] if v is None else v for k, v in given.items()}
 
 
 @tool
 def find_silences(threshold_db: float | None = None, min_silence: float | None = None,
-                  keep_after_speech: float | None = None, keep_before_speech: float | None = None) -> dict:
+                  keep_after_speech: float | None = None, keep_before_speech: float | None = None,
+                  format: Literal["auto", "short", "long"] = "auto") -> dict:
     """Dry run for remove_silences: list pauses in the storyline clips' audio. Nothing is
     changed. Settings default to the user's saved style (get_style), which is calibrated
     from their own hand trims; pass values only to override. threshold_db: how quiet counts
     as a pause (-30 catches breaths, -40 only near-silence); min_silence: shortest pause to
-    cut; keep_after_speech / keep_before_speech: air left after a word / before the next."""
+    cut; keep_after_speech / keep_before_speech: air left after a word / before the next.
+    format: short (reels) or long (vlogs) picks which saved settings to use; auto = short if
+    vertical or under 3 minutes."""
     tl = _tl()
-    args = _silence_args(threshold_db, min_silence, keep_after_speech, keep_before_speech)
+    args = _silence_args(threshold_db, min_silence, keep_after_speech, keep_before_speech, format)
     ranges, notes = tl.silence_ranges(**args)
     total = sum(b - a for a, b in ranges)
     out = {"settings": args, "count": len(ranges), "total_seconds": secs(total),
@@ -412,12 +419,13 @@ def find_silences(threshold_db: float | None = None, min_silence: float | None =
 
 @tool
 def remove_silences(threshold_db: float | None = None, min_silence: float | None = None,
-                    keep_after_speech: float | None = None, keep_before_speech: float | None = None) -> dict:
+                    keep_after_speech: float | None = None, keep_before_speech: float | None = None,
+                    format: Literal["auto", "short", "long"] = "auto") -> dict:
     """Jump-cut edit: ripple-delete pauses from the storyline clips, using the user's saved
     style unless overridden (see find_silences). Connected B-roll, titles, music and the
     adjustment clip are kept. Run find_silences first to show the user what will go."""
     tl = _tl()
-    args = _silence_args(threshold_db, min_silence, keep_after_speech, keep_before_speech)
+    args = _silence_args(threshold_db, min_silence, keep_after_speech, keep_before_speech, format)
     ranges, notes = tl.silence_ranges(**args)
     out = _edit(tl.cut_ranges, ranges, connected="keep", label="Removed pauses:")
     out["settings"] = args
@@ -781,19 +789,28 @@ def get_style() -> dict:
 def update_style(threshold_db: float | None = None, min_silence: float | None = None,
                  keep_after_speech: float | None = None, keep_before_speech: float | None = None,
                  default_look: str | None = None, remove_stutters: bool | None = None,
-                 add_note: str | None = None) -> dict:
+                 add_note: str | None = None, remove_note: str | None = None,
+                 format: Literal["short", "long"] = "short") -> dict:
     """Change saved style defaults, e.g. when the user says cuts feel too tight
-    (raise keep_after_speech) or too loose (lower min_silence). add_note stores a
-    preference in words (e.g. "keep 'So' at the start of the hook")."""
+    (raise keep_after_speech) or too loose (lower min_silence). format: which pause
+    settings to change, short (reels) or long (vlogs). add_note stores a preference in
+    words (e.g. "keep 'So' at the start of the hook"); remove_note deletes the notes
+    containing that text (e.g. one that's out of date)."""
     st = style.load(WORK_DIR)
+    key = _pause_key(format)
     for k, v in {"threshold_db": threshold_db, "min_silence": min_silence,
                  "keep_after_speech": keep_after_speech, "keep_before_speech": keep_before_speech}.items():
         if v is not None:
-            st["silence"][k] = v
+            st[key] = {**(st.get(key) or {}), k: v}
     if default_look is not None:
         st["default_look"] = default_look or None
     if remove_stutters is not None:
         st["remove_stutters"] = remove_stutters
+    if remove_note:
+        gone = [n for n in st["notes"] if remove_note.lower() in n.lower()]
+        if not gone:
+            raise EditError(f"No note contains {remove_note!r}")
+        st["notes"] = [n for n in st["notes"] if n not in gone]
     if add_note:
         st["notes"].append(add_note)
     style.save(WORK_DIR, st)
@@ -883,7 +900,8 @@ def measure_loudness(start: float | None = None, end: float | None = None) -> di
 
 @tool
 def learn_from_edit(your_version: str | None = None, claude_version: str | None = None,
-                    save: bool = False, look_name: str | None = None) -> dict:
+                    save: bool = False, look_name: str | None = None,
+                    format: Literal["auto", "short", "long"] = "auto") -> dict:
     """Compare Claude's rough cut with the user's hand-finished version and learn their style.
     your_version: their exported .fcpxml/.fcpxmld (default: export the project open in Final
     Cut now). claude_version: what Claude sent (default: the last one sent for that project).
@@ -891,7 +909,9 @@ def learn_from_edit(your_version: str | None = None, claude_version: str | None 
     their audio chain and adjustment-clip look, the fonts in their titles, and pause settings
     calibrated to match them.
     save=True stores the pause settings, audio chain and look (named look_name, e.g. the preset
-    they used, e.g. "warm_vlog") as their defaults."""
+    they used, e.g. "warm_vlog") as their defaults. Pause settings are kept separately for
+    short (reels) and long (vlogs) videos, so learning from a vlog doesn't change how reels
+    are cut; format auto = short if vertical or under 3 minutes."""
     from .learn import compare
     from . import transcribe as tr
 
@@ -920,8 +940,12 @@ def learn_from_edit(your_version: str | None = None, claude_version: str | None 
         saved = []
         if report.get("suggested_pause_settings"):
             sp = {k: v for k, v in report["suggested_pause_settings"].items() if k != "match_score"}
-            st["silence"].update(sp)
-            saved.append("pause settings")
+            if format == "auto":
+                from .captions import pick_format
+                format = pick_format(*hand.frame_size(), secs(hand.duration()))
+            key = _pause_key(format)
+            st[key] = {**(st.get(key) or {}), **sp}
+            saved.append(f"pause settings for {'long videos' if format == 'long' else 'reels / short videos'}")
         if report.get("your_audio"):
             st["audio"] = hand.extract_audio_style(report["your_audio"]["example_ref"])
             saved.append("audio chain")

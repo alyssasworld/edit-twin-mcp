@@ -6,9 +6,9 @@
 - Fonts: `list_fonts` finds installed fonts by loose name and reads their real family and face names from the font files. Fonts in your caption styles and in your hand-edited titles (`learn_from_edit`) are remembered as your fonts.
 - Fix: words right after a tight cut were often left out of captions and transcripts, because Whisper starts a word that follows a pause too early and its midpoint fell in the cut pause. Words are now placed by the last part of the word.
 - Lowercase caption styles keep acronyms ("AI") and the names in the style's `keep_caps` ("YouTube", "Wi-Fi") capitalised; split numbers ("10 000") join back up as "10,000"; `punctuation: "questions"` keeps only question marks.
-- Fix: two-line captions had their second line cut off at the bottom of the frame, because a Final Cut title grows down from its first line. Captions of several lines are now lifted by one line height (from the font's own metrics) per extra line, so the last line sits where a one-line caption does.
-- Fix: words the transcript split at a hyphen or decimal point showed as "ex -flatmate" and "1 .5"; they join back up. `fixes` keys can now be phrases ("is it's" → "is. It's").
-- Captions warn when the style's font is installed twice under the same name (e.g. a static and a variable "Marjorie Regular"), which makes Final Cut show garbled letters or fall back to Helvetica.
+- Vlogs get their own pause settings (`silence_long` in `style.json`), separate from reels. `learn_from_edit` saves calibrated pauses for the video's format, `find_silences` / `remove_silences` / `update_style` take a `format`, so learning from a hand-edited vlog no longer has to be kept out of the reel defaults (and the rough-cut skill no longer forces loose vlog pauses once yours are learned).
+- `update_style` can remove notes that are out of date (`remove_note`).
+- Rough-cut skill: check the transcript word by word for false starts and for ums and breaths the transcript missed, which `find_repeats` doesn't catch.
 - `export_srt` writes an .srt of the edit for YouTube closed captions; `remove_captions` removes them again.
 - New `/edit-twin-captions` skill, installed by `install.sh`.
 - Fix: Apple's DTD check failed whenever Final Cut Pro's path contained spaces (always, in a normal install), so rough cuts were never imported.

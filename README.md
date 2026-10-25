@@ -18,7 +18,7 @@ Open a project in Final Cut Pro, then in Claude Code say:
 4. **Cuts it, then adds your style**: your saved colour look on an adjustment clip over the whole edit, and your dialogue sound (gain plus Final Cut's Loudness effect).
 5. **Sends it back to Final Cut Pro as a new project.** Your original is never touched.
 
-It adapts to the format. **Reels and shorts** get tight jump cuts and a check that the first 3 seconds work as a hook. **Landscape vlogs** get looser pacing, and quiet B-roll, scenery and music moments are never cut as "silence".
+It adapts to the format. **Reels and shorts** get tight jump cuts and a check that the first 3 seconds work as a hook. **Landscape vlogs** get their own pacing (looser at first, then learned from your hand edits separately from reels), and quiet B-roll, scenery and music moments are never cut as "silence".
 
 ## Captions 💬
 

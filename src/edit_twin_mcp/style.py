@@ -1,7 +1,7 @@
 """Your editing style: defaults the tools use, learned from your own edits.
 
 Stored as JSON in the working folder:
-  style.json          cut tightness, audio chain, default look, caption styles,
+  style.json          cut tightness (reels and long-form), audio chain, default look, caption styles,
                       the fonts you use, notes
   looks/<name>.json   saved adjustment-clip looks (e.g. warm_vlog)
 """
@@ -22,6 +22,10 @@ DEFAULT_STYLE = {
         "keep_after_speech": 0.08,
         "keep_before_speech": 0.12,
     },
+    # pause settings for long-form (landscape vlogs), learned separately because people
+    # usually trim those differently from reels; None until learned, then "silence" is
+    # used for any setting not given here
+    "silence_long": None,
     "remove_stutters": True,
     "audio": None,          # saved audio chain (see learn_from_edit / save_audio_style)
     "default_look": None,   # name of a saved look to apply after cutting
