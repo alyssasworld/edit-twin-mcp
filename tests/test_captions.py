@@ -137,3 +137,43 @@ def test_words_at_tight_cuts_stay_with_their_clip():
     assert _word_in({"s": 1.76, "e": 2.02}, 0, 2)
     assert not _word_in({"s": 1.76, "e": 2.02}, 2, 4)
     assert not _word_in({"s": -0.5, "e": -0.1}, 0, 2)  # a word that was cut out
+
+
+def test_fixes_can_span_several_words():
+    ws = words("is it's my ex -flatmate with 1 .5 metres")
+    fixed = captions.apply_fixes(ws, {"is it's": "is. It's", "ex -flatmate": "ex-flatmate", "1 .5": "1.5"})
+    assert [w[0] for w in fixed] == ["is.", "It's", "my", "ex-flatmate", "with", "1.5", "metres"]
+    assert fixed[1][1:] == ws[1][1:]                  # same word count: timings kept
+    assert fixed[3][1:] == [ws[3][1], ws[4][2]]       # merged: spans both words
+
+
+def test_split_words_join_back_up():
+    caps = captions.build(words("my ex -flatmate paid 1 .5 grand - nice"), {**LINE, "max_lines": 2}, 1920, 10)
+    assert " ".join(c["text"] for c in caps) == "my ex-flatmate paid 1.5 grand - nice"
+
+
+def test_multi_line_captions_lift_so_the_last_line_stays_in_frame():
+    from types import SimpleNamespace
+
+    from edit_twin_mcp.fcpxml import Timeline
+    stub = SimpleNamespace(_basic_title_effect=lambda: "r9", _color=lambda c: "1 1 1 1")
+    ids = iter(range(100))
+    style = {**LINE, "y": -469.24, "line_height": 69.08}
+
+    def y_of(lines):
+        title = Timeline._caption_title(stub, style, {}, lambda: f"ts{next(ids)}", lines)
+        return float(next(p for p in title.findall("param") if p.get("name") == "Position").get("value").split()[1])
+
+    assert y_of(1) == -469.24
+    assert round(y_of(2), 2) == round(-469.24 + 69.08, 2)
+    assert captions.line_height(LINE) == 60.0           # no font installed: 1.2 x size
+
+
+def test_duplicate_fonts_are_found(monkeypatch):
+    from edit_twin_mcp import fonts
+    faces = ({"family": "Marjorie", "face": "Regular", "path": "/f/Marjorie-Regular.otf", "variable": False},
+             {"family": "Marjorie", "face": "Regular", "path": "/f/Marjorie-VariableVF.ttf", "variable": True},
+             {"family": "Marjorie", "face": "Bold", "path": "/f/Marjorie-Bold.otf", "variable": False})
+    monkeypatch.setattr(fonts, "_all_faces", lambda: faces)
+    assert len(fonts.duplicates("Marjorie", "Regular")) == 2
+    assert fonts.duplicates("Marjorie", "Bold") == []

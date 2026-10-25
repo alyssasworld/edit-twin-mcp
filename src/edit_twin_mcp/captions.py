@@ -139,16 +139,46 @@ def text_of(words: list[str], style: dict) -> str:
 
 
 def apply_fixes(words: list[list], fixes: dict[str, str] | None) -> list[list]:
-    """Whole-word replacements for words the transcript got wrong ("cloud" -> "Claude")."""
+    """Replacements for words the transcript got wrong ("cloud" -> "Claude"). A key can
+    be several words ("is it's" -> "is. It's", "ex -flatmate" -> "ex-flatmate"): a
+    replacement with as many words keeps each word's timing, otherwise it becomes one
+    word spanning the run."""
     if not fixes:
         return words
-    table = {_norm(k): v for k, v in fixes.items()}
-    out = []
-    for w in words:
-        m = re.match(r"^(\W*)(.*?)(\W*)$", w[0])
-        core = _norm(m.group(2))
-        out.append([m.group(1) + table[core] + m.group(3), *w[1:]] if core in table else list(w))
+    table = {}
+    for k, v in fixes.items():
+        key = tuple(p for p in (_norm(x) for x in k.split()) if p)
+        if key:
+            table[key] = v
+    longest = max(len(k) for k in table) if table else 0
+    out, i = [], 0
+    while i < len(words):
+        for n in range(min(longest, len(words) - i), 0, -1):
+            run = words[i:i + n]
+            key = tuple(_norm(w[0]) for w in run)
+            if key not in table:
+                continue
+            lead = re.match(r"^\W*", run[0][0]).group(0)
+            tail = re.search(r"\W*$", run[-1][0]).group(0)
+            new = table[key].split()
+            if len(new) == n:
+                new[0], new[-1] = lead + new[0], new[-1] + tail
+                out += [[t, *w[1:]] for t, w in zip(new, run)]
+            else:
+                out.append([lead + table[key] + tail, run[0][1], run[-1][2]])
+            i += n
+            break
+        else:
+            out.append(list(words[i]))
+            i += 1
     return out
+
+
+def line_height(style: dict) -> float:
+    """Distance between caption lines in title units, from the font when it's installed."""
+    size = float(style["size"])
+    metrics = fonts.metrics_for(style["font"], style.get("face")) if style.get("font") else None
+    return round(metrics.line_height(size) if metrics else size * 1.2, 2)
 
 
 class Measure:
@@ -210,6 +240,20 @@ def _join_thousands(words: list[list]) -> list[list]:
     return out
 
 
+def _join_fragments(words: list[list]) -> list[list]:
+    """The transcript sometimes splits a word at a hyphen or decimal point ("ex" "-flatmate",
+    "1" ".5"); glue the piece back on so it doesn't show as "ex -flatmate"."""
+    out: list[list] = []
+    for w in words:
+        prev = out[-1][0] if out else ""
+        if (re.match(r"-\w", w[0]) and re.search(r"\w$", prev)) or \
+                (re.match(r"\.\d", w[0]) and re.search(r"\d$", prev)):
+            out[-1] = [prev + w[0], out[-1][1], w[2]]
+        else:
+            out.append(list(w))
+    return out
+
+
 def _join_names(words: list[list], keep_caps: list[str] | None) -> list[list]:
     """Put a hyphenated name the user keeps ("Wi-Fi") back together when the
     transcript heard it as separate words, so it shows as one caption."""
@@ -236,7 +280,7 @@ def build(words: list[list], style: dict, frame_width: int, end_limit: float,
     """words: [[word, start, end], ...] in timeline seconds, in order; frame_width is
     in title units (title_width).
     Returns [{"start", "end", "text"}] with no overlaps, ready to place as titles."""
-    words = _join_names(_join_thousands([w for w in words if w[0].strip()]), style.get("keep_caps"))
+    words = _join_names(_join_fragments(_join_thousands([w for w in words if w[0].strip()])), style.get("keep_caps"))
     if skip_fillers if style.get("skip_fillers") is None else style["skip_fillers"]:
         words = [w for w in words if _norm(w[0]) not in FILLERS]
     if style.get("punctuation") in ("strip", "questions"):
