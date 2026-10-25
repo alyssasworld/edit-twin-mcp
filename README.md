@@ -29,7 +29,7 @@ Captions are timed to every word on your edit and added as Final Cut Pro titles,
 - **Short form**: one word (or a few) pops on as you say it, e.g. in a display font at the top of a vertical reel.
 - **Long form**: subtitle lines near the bottom, measured in your font so each line fits the frame and stays comfortable to read.
 
-Set a style up once, either by **styling one title by hand** in Final Cut (Edit Twin copies its font, size, colour, position and any animation exactly), or by describing it (*"one word at a time, Bootzy TM, lowercase, near the top, for my reels"*). Any font installed on your Mac works; Edit Twin reads the real font names from the font files and remembers the fonts you use, so next time *"caption it"* is enough. Misheard words are fixed before anything is added, and `export_srt` writes an `.srt` for YouTube closed captions.
+Set a style up once, either by **styling one title by hand** in Final Cut (Edit Twin copies its font, size, colour, position and any animation exactly), or by describing it (*"one word at a time, Futura, lowercase, near the top, for my reels"*). Any font installed on your Mac works; Edit Twin reads the real font names from the font files and remembers the fonts you use, so next time *"caption it"* is enough. Misheard words are fixed before anything is added, and `export_srt` writes an `.srt` for YouTube closed captions.
 
 ## How it learns your style ✨
 
@@ -98,7 +98,7 @@ If your footage is on an external drive, keep it plugged in while editing. macOS
 - *"Save the look on my adjustment clip as `warm_vlog` and use it by default."*
 - *"Put coffee.mov over 0:42 for 3 seconds and add music.m4a under everything at −18 dB."*
 - *"Add chapter markers at each topic change."*
-- *"Caption this reel one word at a time in Bootzy TM, lowercase, near the top. Make that my reel style."*
+- *"Caption this reel one word at a time in Futura, lowercase, near the top. Make that my reel style."*
 - *"Save the title at 0:03 as my vlog subtitle style."*
 - *"Caption it"* (uses your saved style for the format) · *"Export an SRT for YouTube."*
 - *"How loud is this edit?"*

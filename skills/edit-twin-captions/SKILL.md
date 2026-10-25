@@ -15,16 +15,16 @@ Use the `edit-twin` MCP tools. Captions are Final Cut Pro titles placed from the
 ## 2. If there's no saved style for this format, set one up first
 Ask the user how they like their captions, or offer the two ways:
 - **Copy a title they styled by hand (most exact).** Ask them to add one title in Final Cut, style it (font, size, colour, position, any animation) and tell you. Re-export (`fcp_export_project`, `open_timeline`), find the title's ref in `get_timeline` (connected items with `"type": "title"`), then `save_caption_style` with `from_title` = that ref, `mode` (`word` for short, `line` for long) and `default_for`.
-- **Describe it.** Turn the font they name into the installed name with `list_fonts` (query = part of the name). If it isn't installed, say so and stop; don't substitute a font. Then `save_caption_style` with `mode`, `font`, `face`, `color`, `position` (`top`, `upper`, `middle`, `lower`, `bottom`), `case` (`lower` if they write in lowercase), `punctuation` (`strip` is usual for one-word captions), and `default_for`.
+- **Describe it.** Turn the font they name into the installed name with `list_fonts` (query = part of the name). If it isn't installed, say so and stop; don't substitute a font. Then `save_caption_style` with `mode`, `font`, `face`, `color`, `position` (`top`, `upper`, `middle`, `lower`, `bottom`), `case` (`lower` if they write in lowercase), `punctuation` (`strip` is usual for one-word captions; `questions` keeps only question marks), and `default_for`. With `case` `lower`, acronyms the transcript writes in capitals ("AI") stay capitalised; names and words the user capitalises go in `keep_caps` ("YouTube", "Wi-Fi"; a hyphenated name also joins into one caption).
   - Short form: `mode` `word`, `max_words` 1 (2–3 for "a few words at a time").
   - Long form: `mode` `line`, `max_lines` 1 (2 for denser subtitles). Lines are measured in their font so they fit the frame (`max_width`, default 0.8 of the width) and stay comfortable to read (42 characters per line by default).
 Saving a style also remembers its font as one of the user's fonts, so next time just use the default.
 
-When the user names a font or style in passing ("do the bootzy captions"), match it against `get_style` `fonts` and `caption_styles` first.
+When the user names a font or style in passing ("do the futura captions"), match it against `get_style` `fonts` and `caption_styles` first.
 
 ## 3. Check the words, then add
-1. `add_captions` with `dry_run=true` (and the style if the user named one; `vocabulary` for names and jargon). Read through the captions for misheard words (names, slang, product names). Show the user any you'd fix, plus a sample of a few captions so they can see the line breaks.
-2. `add_captions` with `fixes` for the corrections (e.g. `{"gorge": "gorg"}`). It replaces captions added before.
+1. `add_captions` with `dry_run=true` (and the style if the user named one; `vocabulary` for names and jargon). Read through the captions for misheard words (names, slang, product names). Show the user any you'd fix, plus a sample of a few captions so they can see the line breaks. With a lowercase style, also check for names that should be capitalised and add them to the style's `keep_caps` (`save_caption_style`), so the next video gets them right too.
+2. `add_captions` with `fixes` for the corrections (e.g. `{"cloud": "Claude"}`). It replaces captions added before.
 3. Single-caption tweaks afterwards: `edit_title` with the caption's ref.
 
 ## 4. Check and send

@@ -1,7 +1,7 @@
 """Installed fonts: their real names, and how wide a piece of text is in one.
 
-Final Cut Pro titles name a font by family ("Bootzy TM") and face ("Bold"), which
-often differ from the file name (BootzyTM.ttf), so this reads the names from the
+Final Cut Pro titles name a font by family ("Avenir Next") and face ("Bold"), which
+often differ from the file name (Avenir Next.ttc), so this reads the names from the
 font file itself. It also reads glyph widths, so long-form captions can be broken
 into lines that actually fit the frame in the chosen font. Pure Python, no
 dependencies; only .ttf/.otf/.ttc files are read.
@@ -115,7 +115,7 @@ def squash(s: str) -> str:
 
 
 def search(query: str | None = None) -> list[dict]:
-    """Installed font families matching a loose query ("bootzy tm", "marjorie"),
+    """Installed font families matching a loose query ("avenir next", "futura"),
     each with its faces. Spaces, case and punctuation don't matter."""
     q = squash(query or "")
     fams: dict[str, dict] = {}

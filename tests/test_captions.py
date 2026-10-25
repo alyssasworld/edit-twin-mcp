@@ -102,3 +102,38 @@ def test_srt_and_colour():
     srt = captions.to_srt([{"start": 61.5, "end": 3725.25, "text": "hi"}])
     assert srt == "1\n00:01:01,500 --> 01:02:05,250\nhi\n"
     assert _fcp_color_to_hex("1 0.913725 0.780392 1") == "#ffe9c7"
+
+
+def test_lowercase_keeps_acronyms_and_names():
+    style = {**WORD, "case": "lower", "keep_caps": ["YouTube", "Wi-Fi", "London"]}
+    caps = captions.build(words("So AI and youtube need Wi-Fi, the London office for us"), style, 1080, 10)
+    assert [c["text"] for c in caps] == ["so", "AI", "and", "YouTube", "need", "Wi-Fi",
+                                         "the", "London", "office", "for", "us"]
+
+
+def test_hyphenated_names_join_up():
+    style = {**WORD, "case": "lower", "keep_caps": ["Wi-Fi"]}
+    caps = captions.build(words("the wi fi password"), style, 1080, 10)
+    assert [c["text"] for c in caps] == ["the", "Wi-Fi", "password"]
+
+
+def test_numbers_and_question_marks():
+    caps = captions.build(words("around 10,000 agents, right?"), {**WORD, "case": "lower"}, 1080, 10)
+    assert [c["text"] for c in caps] == ["around", "10,000", "agents", "right"]
+    caps = captions.build(words("around 10,000 agents, right?"),
+                          {**WORD, "case": "lower", "punctuation": "questions"}, 1080, 10)
+    assert [c["text"] for c in caps] == ["around", "10,000", "agents", "right?"]
+    caps = captions.build(words("around 10 000 ai agents"), {**WORD, "case": "lower", "keep_caps": ["AI"]}, 1080, 10)
+    assert [c["text"] for c in caps] == ["around", "10,000", "AI", "agents"]
+
+
+def test_words_at_tight_cuts_stay_with_their_clip():
+    from edit_twin_mcp.fcpxml import _word_in
+    # Whisper starts "put" 1.5s early, soaking up the pause that was cut; it ends 0.18s
+    # into the clip, so it belongs to that clip, not the cut-away pause.
+    assert _word_in({"s": -1.5, "e": 0.18}, 0, 2)
+    assert _word_in({"s": -0.6, "e": 0.08}, 0, 2)       # "and", 0.08s into the clip
+    # "it" runs a frame past the end of its clip: it stays there and isn't repeated next clip
+    assert _word_in({"s": 1.76, "e": 2.02}, 0, 2)
+    assert not _word_in({"s": 1.76, "e": 2.02}, 2, 4)
+    assert not _word_in({"s": -0.5, "e": -0.1}, 0, 2)  # a word that was cut out

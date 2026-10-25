@@ -521,7 +521,7 @@ def fit_to_timeline(ref: str | None = None, name_contains: str | None = None) ->
 @tool
 def list_fonts(query: str | None = None) -> dict:
     """Fonts: the ones the user works with (saved in their style) and, with query, the
-    installed fonts matching it ("bootzy", "marjorie") with their exact family and face
+    installed fonts matching it ("avenir", "futura") with their exact family and face
     names as Final Cut Pro needs them. Use it to turn a font the user names into the
     real name before save_caption_style."""
     from . import fonts
@@ -555,8 +555,8 @@ def save_caption_style(name: str, mode: Literal["word", "line"] | None = None,
                        size: float | None = None, color: str | None = None,
                        position: Literal["top", "upper", "middle", "lower", "bottom"] | None = None,
                        case: Literal["as_spoken", "lower", "upper"] | None = None,
-                       punctuation: Literal["keep", "strip"] | None = None,
-                       max_words: int | None = None, max_lines: int | None = None,
+                       punctuation: Literal["keep", "strip", "questions"] | None = None,
+                       keep_caps: list[str] | None = None, max_words: int | None = None, max_lines: int | None = None,
                        max_width: float | None = None, stroke_color: str | None = None,
                        stroke_width: float | None = None, shadow: bool | None = None,
                        default_for: Literal["short", "long"] | None = None) -> dict:
@@ -565,10 +565,13 @@ def save_caption_style(name: str, mode: Literal["word", "line"] | None = None,
     timeline ("2.0"); its font, size, colour, position and any animation are copied exactly.
     Or describe it: mode "word" = one word (max_words) at a time as it's said, for short form;
     "line" = subtitle lines that fit the frame (max_width = fraction of frame width, max_lines),
-    for long form. font: any installed font, loosely named ("bootzy tm"); it's matched to the
+    for long form. font: any installed font, loosely named ("avenir next"); it's matched to the
     exact name. position/size without from_title scale to any resolution. default_for makes
     it the style add_captions uses for short (vertical) or long videos. The font is remembered
-    as one of the user's fonts."""
+    as one of the user's fonts. punctuation "questions" strips all but question marks.
+    keep_caps: names and words written as given even when case is "lower" ("YouTube",
+    "Wi-Fi"); added to the style's list. Acronyms the transcript writes in capitals
+    ("AI") are always kept."""
     from . import captions, fonts
 
     st = style.load(WORK_DIR)
@@ -615,6 +618,10 @@ def save_caption_style(name: str, mode: Literal["word", "line"] | None = None,
     if position is not None:
         s.pop("y", None)
         s["position"] = position
+    if keep_caps:
+        known = {w.lower(): w for w in s.get("keep_caps") or []}
+        known.update({w.lower(): w for w in keep_caps})
+        s["keep_caps"] = sorted(known.values(), key=str.lower)
     for k, v in {"color": color, "case": case, "punctuation": punctuation, "max_words": max_words,
                  "max_lines": max_lines, "max_width": max_width, "stroke_color": stroke_color,
                  "stroke_width": stroke_width, "shadow": shadow}.items():
@@ -662,7 +669,7 @@ def add_captions(style_name: str | None = None, format: Literal["auto", "short",
     CURRENT timeline (run after cutting). Each caption is a title on its own lane above
     everything, so it isn't affected by an adjustment-clip look. style_name: a saved caption
     style (default: the user's default for the format; format auto = short if vertical or
-    under 3 minutes). fixes: whole-word corrections for misheard words {"gorge": "gorg"};
+    under 3 minutes). fixes: whole-word corrections for misheard words {"cloud": "Claude"};
     vocabulary helps the transcript spell names. dry_run=True returns the captions without
     adding them, to check wording and line breaks first. replace_existing removes captions
     added before (only within start/end if given). Fix a single caption with edit_title."""

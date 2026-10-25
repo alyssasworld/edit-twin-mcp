@@ -75,6 +75,21 @@ def _is_anchored(el: ET.Element) -> bool:
     return el.tag in ANCHORABLE and el.get("lane") not in (None, "", "0")
 
 
+# Whisper starts a word that follows a pause too early (its start soaks up the pause),
+# but its end is reliable. So a word counts as in a clip when enough of its last part
+# (at most WORD_CORE seconds) is inside it: a word right after a tight cut isn't dropped
+# because its midpoint sits in the cut pause, and a word whose end runs a frame past a
+# cut stays with the clip it was said in.
+WORD_CORE = 0.3
+WORD_MIN_OVERLAP = 0.05
+
+
+def _word_in(w: dict, lo: float, hi: float) -> bool:
+    s = max(w["s"], w["e"] - WORD_CORE)
+    overlap = min(w["e"], hi) - max(s, lo)
+    return overlap > 0 and overlap >= min(WORD_MIN_OVERLAP, (w["e"] - s) / 2)
+
+
 def _fcp_color_to_hex(value: str) -> str:
     """Final Cut's RGBA ("1 0.9 0.8 1", each 0-1) as hex ("#ffe5cc")."""
     parts = [float(x) for x in value.split()[:3]]
@@ -1271,8 +1286,7 @@ class Timeline:
 
             for seg in data["segments"]:
                 words = seg.get("words") or []
-                visible = [w for w in words
-                           if st <= a_start + Fraction(str((w["s"] + w["e"]) / 2)) < st + d]
+                visible = [w for w in words if _word_in(w, float(st - a_start), float(st + d - a_start))]
                 if not words:
                     mid = a_start + Fraction(str((seg["start"] + seg["end"]) / 2))
                     if not (st <= mid < st + d):
