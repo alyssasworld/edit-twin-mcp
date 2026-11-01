@@ -2,6 +2,8 @@
 
 **Your editing twin for Final Cut Pro.** Edit Twin lets [Claude Code](https://claude.com/claude-code) rough-cut your Final Cut Pro projects for you: it cuts retakes, "um"s and dead air, adds your colour look and dialogue sound, and hands you back a new project to finish. Then it **learns from how you finish it**, so each rough cut gets closer to how you'd have cut it yourself.
 
+Note: Currently tracking what best ASR model for transcripts, captioning via this [dashboard](https://alyssasworld.github.io/edit-twin-asr-benchmark/)
+
 > Edit Twin is an independent, free, open-source project. It is not affiliated with, endorsed by, or sponsored by Apple Inc. Final Cut Pro is a trademark of Apple Inc.
 
 ---
