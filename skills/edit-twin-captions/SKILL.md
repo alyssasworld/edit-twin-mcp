@@ -23,9 +23,13 @@ Saving a style also remembers its font as one of the user's fonts, so next time 
 When the user names a font or style in passing ("do the futura captions"), match it against `get_style` `fonts` and `caption_styles` first.
 
 ## 3. Check the words, then add
-1. `add_captions` with `dry_run=true` (and the style if the user named one; `vocabulary` for names and jargon). Read through the captions for misheard words (names, slang, product names). Show the user any you'd fix, plus a sample of a few captions so they can see the line breaks. With a lowercase style, also check for names that should be capitalised and add them to the style's `keep_caps` (`save_caption_style`), so the next video gets them right too.
-2. `add_captions` with `fixes` for the corrections (e.g. `{"cloud": "Claude"}`). It replaces captions added before.
-3. Single-caption tweaks afterwards: `edit_title` with the caption's ref.
+1. `add_captions` with `dry_run=true` (and the style if the user named one; `vocabulary` for names and jargon). `get_style` `transcription.vocabulary` and `fixes` are already applied. Read through the captions for:
+   - **misheard words**: names, slang, product names;
+   - **punctuation and capitals** (line styles, and word styles that keep punctuation): a sentence that runs into the next ("so it works and then"), a missing question mark, a sentence that doesn't start with a capital, a stray full stop mid-sentence. Parakeet's punctuation is a little weaker than Whisper's, so check this every time.
+   Show the user any you'd fix, plus a sample of a few captions so they can see the line breaks. With a lowercase style, also check for names that should be capitalised and add them to the style's `keep_caps` (`save_caption_style`), so the next video gets them right too.
+2. `add_captions` with `fixes` for the corrections (e.g. `{"cloud": "Claude", "works and then": "works. And then"}`). A punctuation fix keeps the same words, so each word keeps its timing. Read `warnings`: a fix that matched nothing changed nothing, so correct its spelling against the dry run and run again. It replaces captions added before.
+3. Names that will come up again: offer to remember them, with `update_style` `add_vocabulary` (catches close misspellings too) or `add_captions` `remember_fixes=true` (exact replacements). Only remember corrections that are always right; "cloud" → "Claude" would break a video about the weather.
+4. Single-caption tweaks afterwards: `edit_title` with the caption's ref.
 
 ## 4. Check and send
 1. `validate_timeline`, then `send_to_final_cut` with the project name "<original name> (captions)" (or "(rough cut + captions)" after a rough cut).

@@ -1,6 +1,13 @@
 # Changelog
 
 ## Unreleased
+- Parakeet speech-to-text (NVIDIA Parakeet TDT 0.6B v3 via `parakeet-mlx`). On Apple Silicon it's the new default (`auto`), for the 25 European languages it knows; Whisper is used on Intel Macs and for other languages. On the author's footage it caught 16 of 20 um/uh (Whisper: 7), made 46 word errors in 1,196 (Whisper: 79) and ran ~3.6x faster. Existing Whisper transcripts stay cached.
+- Choosing the engine: `update_style` `engine` (`auto`/`whisper`/`parakeet`) and `language`; `./install.sh --engine whisper|parakeet|auto`, which saves `EDIT_TWIN_ASR` as a lock over the saved choice and skips installing Parakeet for `whisper`. The installer, `get_style` and the server log say which engine runs and why.
+- `compare_engines`: transcribes the timeline with both engines and lists (or marks) the fillers only one of them found.
+- Names: a saved vocabulary (`update_style` `add_vocabulary`) corrects close misspellings and spacing of your names in every transcript, with guards against changing real words; exact fixes can be saved too (`add_fixes`, `add_captions` `remember_fixes`). `transcribe` lists the corrections it made.
+- Captions: fixes that match nothing are reported in `warnings`; the captions skill now checks punctuation and capitals in the dry run.
+- Transcript-to-timeline mapping is engine-aware. Parakeet's word times scatter both ways at a cut, so the Whisper rule (judge a word by its last 0.3 s) dropped ~1 in 5 words after tight cuts, e.g. 51 of 264 on a polished reel. Parakeet words now go to the one clip they overlap most (padded 0.1 s), never two. Scored against what the kept audio actually says on four real edits: 31 words missing instead of 183, level with Whisper; Whisper's rule and results are unchanged.
+- Fix: a one-word caption fix dropped punctuation before the word (`"cloud,"` -> `Claude,"`).
 - Captions: `add_captions` places word-timed captions from the transcript as Final Cut Pro titles. Short form shows one word (or a few) at a time; long form shows subtitle lines measured in the chosen font to fit the frame (42 characters per line by default). Misheard words can be fixed first (`fixes`, `dry_run`).
 - Caption styles: `save_caption_style` saves your styles, copied from a title you styled by hand (font, size, colour, position, animation) or described in words, with a default for short and long videos. Stored in `style.json`; no fonts are built in.
 - Fonts: `list_fonts` finds installed fonts by loose name and reads their real family and face names from the font files. Fonts in your caption styles and in your hand-edited titles (`learn_from_edit`) are remembered as your fonts.

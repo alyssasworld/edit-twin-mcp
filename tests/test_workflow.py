@@ -138,7 +138,9 @@ async def run(root: str) -> None:
     hand = make_project(os.path.join(root, "My reel (hand).fcpxmld"), media["talk"], "My reel (hand)",
                         with_look=True, with_audio=True)
 
-    env = {**os.environ, "EDIT_TWIN_DIR": work, "PYTHONPATH": os.path.join(HERE, "..", "src")}
+    # pinned to Whisper so the stub transcript is used even where Parakeet is installed
+    env = {**os.environ, "EDIT_TWIN_DIR": work, "PYTHONPATH": os.path.join(HERE, "..", "src"),
+           "EDIT_TWIN_ASR": "whisper"}
     params = StdioServerParameters(command=sys.executable, args=["-m", "edit_twin_mcp.server"], env=env)
     async with stdio_client(params) as (r, w):
         async with ClientSession(r, w) as s:
@@ -250,9 +252,39 @@ async def run(root: str) -> None:
             await call("remove_captions")
             assert not titles_of(await call("get_timeline"))
 
+            # Corrections: a fix that matches nothing is reported; saved fixes and
+            # vocabulary apply to every transcript; remembered caption fixes persist
+            dry = await call("add_captions", {"dry_run": True, "fixes": {"no such phrase": "x"}})
+            assert any("matched nothing" in w for w in dry.get("warnings", [])), dry
+            style = await call("update_style", {"add_fixes": {"pretty simple": "pretty simple!"},
+                                                "add_vocabulary": ["Follow"]})
+            assert style["transcription"]["fixes"] == {"pretty simple": "pretty simple!"}
+            text = await call("transcribe")
+            assert any("simple!" in seg["text"] for seg in text["segments"]), text
+            assert text["corrections"], text
+            await call("add_captions", {"dry_run": False, "fixes": {"door": "Door"}, "remember_fixes": True})
+            style = await call("update_style", {"remove_fixes": ["pretty simple"], "remove_vocabulary": ["follow"]})
+            assert style["transcription"]["fixes"] == {"door": "Door"}
+            assert style["transcription"]["vocabulary"] == []
+            res = await call("update_style", {"engine": "parakeet"}, expect_error=not _parakeet_ok())
+            if _parakeet_ok():   # saved, but the EDIT_TWIN_ASR lock still wins
+                assert "wins" in res["warning"] and "whisper" in res["speech_to_text"], res
+            res = await call("update_style", {"engine": "auto", "language": "ja"})
+            assert res["transcription"]["language"] == "ja" and "whisper" in res["speech_to_text"]
+            await call("remove_captions")
+
             await call("delete_clip", {"ref": "99"}, expect_error=True)
             if sys.platform != "darwin":
                 await call("fcp_menu", {"path": ["File", "Export XML…"]}, expect_error=True)
+
+
+def _parakeet_ok() -> bool:
+    from edit_twin_mcp import transcribe as tr
+    try:
+        tr.resolve_engine("parakeet")
+        return True
+    except RuntimeError:
+        return False
 
 
 def test_workflow():

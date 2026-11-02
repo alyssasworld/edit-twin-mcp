@@ -2,7 +2,7 @@
 
 Stored as JSON in the working folder:
   style.json          cut tightness (reels and long-form), audio chain, default look, caption styles,
-                      the fonts you use, notes
+                      the fonts you use, notes, transcription (engine, vocabulary, fixes)
   looks/<name>.json   saved adjustment-clip looks (e.g. warm_vlog)
 """
 
@@ -34,6 +34,10 @@ DEFAULT_STYLE = {
     # fonts the user works with: [{family, face, used_for: [...]}]
     "fonts": [],
     "notes": [],
+    # speech-to-text: engine None/"auto" picks Parakeet or Whisper (see transcribe.py);
+    # language None = detect; vocabulary = names/jargon whose near-miss spellings get
+    # corrected; fixes = always-right replacements
+    "transcription": {"engine": None, "language": None, "vocabulary": [], "fixes": {}},
 }
 
 

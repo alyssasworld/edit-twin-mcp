@@ -162,7 +162,8 @@ def apply_fixes(words: list[list], fixes: dict[str, str] | None) -> list[list]:
             tail = re.search(r"\W*$", run[-1][0]).group(0)
             new = table[key].split()
             if len(new) == n:
-                new[0], new[-1] = lead + new[0], new[-1] + tail
+                new[0] = lead + new[0]  # two steps: with one word, both ends are new[0]
+                new[-1] = new[-1] + tail
                 out += [[t, *w[1:]] for t, w in zip(new, run)]
             else:
                 out.append([lead + table[key] + tail, run[0][1], run[-1][2]])
