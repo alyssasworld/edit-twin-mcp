@@ -177,3 +177,26 @@ def test_duplicate_fonts_are_found(monkeypatch):
     monkeypatch.setattr(fonts, "_all_faces", lambda: faces)
     assert len(fonts.duplicates("Marjorie", "Regular")) == 2
     assert fonts.duplicates("Marjorie", "Bold") == []
+
+
+def test_one_word_fix_keeps_punctuation_on_both_sides():
+    out = captions.apply_fixes([['"cloud,"', 0.0, 0.3]], {"cloud": "Claude"})
+    assert out[0][0] == '"Claude,"'
+
+
+def test_parakeet_words_go_to_one_clip_through_tight_cuts():
+    """Real Parakeet word times and real kept clips (file seconds) from a hand-polished
+    reel cut with no air after words; the truth is what the kept audio says."""
+    from edit_twin_mcp.fcpxml import _best_clip, _word_in
+    clips = [(8, 52.28, 53.68), (9, 54.92, 57.56), (14, 82.08, 83.28), (15, 84.48, 86.48)]
+    # "...solving each one." ends clip 8, though Parakeet starts "one." at the cut
+    one = {"s": 53.64, "e": 54.60}
+    assert _best_clip(one, clips) == 8
+    assert not _word_in(one, 52.28, 53.68)  # the Whisper rule dropped it
+    assert _best_clip({"s": 54.72, "e": 55.04}, clips) == 9  # "And" starts 0.2 s early
+    assert _best_clip({"s": 84.20, "e": 84.84}, clips) == 15  # "air" starts 0.28 s early
+    assert _word_in({"s": 84.20, "e": 84.84}, 84.48, 86.48)  # (the Whisper rule keeps this one too)
+    # a word in a removed stretch, clear of every clip, is left out
+    assert _best_clip({"s": 60.00, "e": 60.40}, clips) is None
+    # a word touching two clips goes to one of them only
+    assert _best_clip({"s": 53.60, "e": 54.95}, [(0, 52.0, 53.68), (1, 54.92, 56.0)]) in (0, 1)

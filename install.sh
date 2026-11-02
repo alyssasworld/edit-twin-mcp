@@ -1,9 +1,37 @@
 #!/bin/bash
 # Edit Twin installer: sets up the server and registers it with Claude Code.
 # Run from this folder:  ./install.sh
+#
+# Speech-to-text engine (optional; the default picks for you):
+#   ./install.sh                    auto: Parakeet on Apple Silicon, Whisper otherwise
+#   ./install.sh --engine whisper   always Whisper; Parakeet isn't installed
+#   ./install.sh --engine parakeet  always Parakeet (Apple Silicon only)
+# The choice can also come from EDIT_TWIN_ASR (EDIT_TWIN_ASR=whisper ./install.sh).
+# whisper/parakeet are saved with the server registration as a lock that overrides the
+# user's own choice in Claude; run again with --engine auto to remove the lock.
 set -e
 cd "$(dirname "$0")"
 HERE="$(pwd)"
+
+ENGINE="${EDIT_TWIN_ASR:-auto}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --engine) ENGINE="${2:-}"; shift 2 ;;
+    --engine=*) ENGINE="${1#*=}"; shift ;;
+    -h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "!! Unknown option: $1 (see ./install.sh --help)"; exit 1 ;;
+  esac
+done
+ENGINE="$(echo "$ENGINE" | tr '[:upper:]' '[:lower:]')"
+case "$ENGINE" in
+  auto|whisper|parakeet) ;;
+  *) echo "!! --engine must be auto, whisper or parakeet (got '$ENGINE')"; exit 1 ;;
+esac
+APPLE_SILICON=0
+[ "$(uname)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ] && APPLE_SILICON=1
+if [ "$ENGINE" = "parakeet" ] && [ "$APPLE_SILICON" = 0 ]; then
+  echo "!! Parakeet needs an Apple Silicon Mac; use --engine auto or --engine whisper."; exit 1
+fi
 
 echo "== Edit Twin for Claude Code"
 
@@ -41,17 +69,46 @@ fi
 echo "Using $($PY --version)"
 "$PY" -m venv .venv
 .venv/bin/pip install --quiet --upgrade pip
-.venv/bin/pip install --quiet -e '.[transcribe]'
+if [ "$ENGINE" = "whisper" ]; then
+  EXTRAS="transcribe"
+else
+  EXTRAS="transcribe,parakeet"   # parakeet installs nothing on Intel Macs
+fi
+.venv/bin/pip install --quiet -e ".[$EXTRAS]"
+if [ "$ENGINE" = "whisper" ] && .venv/bin/python -c "import parakeet_mlx" >/dev/null 2>&1; then
+  .venv/bin/pip uninstall --quiet -y parakeet-mlx   # left over from an earlier install
+  echo "Removed Parakeet (--engine whisper)."
+fi
 echo "Installed into $HERE/.venv"
+if [ "$APPLE_SILICON" = 1 ]; then echo "Mac: Apple Silicon"; else echo "Mac: Intel"; fi
+# the same choice the server will make, including a saved choice in style.json
+CHOICE_PY='import os
+from edit_twin_mcp import style, transcribe as tr
+t = style.load(os.path.expanduser(os.environ.get("EDIT_TWIN_DIR", "~/Movies/Edit Twin")))["transcription"]
+print(tr.describe_choice(t.get("engine"), t.get("language")))'
+if [ "$ENGINE" = "auto" ]; then
+  ENGINE_LINE="$(env -u EDIT_TWIN_ASR .venv/bin/python -c "$CHOICE_PY")"
+else
+  ENGINE_LINE="$(EDIT_TWIN_ASR="$ENGINE" .venv/bin/python -c "$CHOICE_PY")"
+fi
+echo "$ENGINE_LINE"
+echo "  (the model downloads on the first transcription; change later with ./install.sh --engine ...)"
 
 # 3. Register with Claude Code (available in every project)
 if command -v claude >/dev/null 2>&1; then
   claude mcp remove edit-twin --scope user >/dev/null 2>&1 || true
-  claude mcp add --scope user edit-twin -- "$HERE/.venv/bin/edit-twin-mcp"
-  echo "Registered 'edit-twin' with Claude Code."
+  if [ "$ENGINE" = "auto" ]; then
+    claude mcp add --scope user edit-twin -- "$HERE/.venv/bin/edit-twin-mcp"
+    echo "Registered 'edit-twin' with Claude Code."
+  else
+    claude mcp add edit-twin --scope user -e "EDIT_TWIN_ASR=$ENGINE" -- "$HERE/.venv/bin/edit-twin-mcp"
+    echo "Registered 'edit-twin' with Claude Code, locked to $ENGINE (EDIT_TWIN_ASR=$ENGINE)."
+  fi
 else
+  LOCK=""
+  [ "$ENGINE" != "auto" ] && LOCK=" -e EDIT_TWIN_ASR=$ENGINE"
   echo "Claude Code isn't installed yet. After installing it, run:"
-  echo "  claude mcp add --scope user edit-twin -- \"$HERE/.venv/bin/edit-twin-mcp\""
+  echo "  claude mcp add edit-twin --scope user$LOCK -- \"$HERE/.venv/bin/edit-twin-mcp\""
 fi
 
 # 4. Install (or update) the skills for Claude Code

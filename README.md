@@ -71,12 +71,30 @@ cd edit-twin-mcp
 The installer:
 - installs **ffmpeg** and **Python 3.12** with Homebrew, only if they're missing,
 - sets everything up in a private folder (`.venv` inside the cloned folder), so it won't touch your other Python stuff,
-- installs the Python packages there: the MCP SDK, plus the speech-to-text engine (`mlx-whisper` on Apple Silicon, `faster-whisper` on Intel) and its dependencies (on Apple Silicon these include PyTorch, NumPy and SciPy, roughly 1 GB),
+- installs the Python packages there: the MCP SDK, plus the speech-to-text engines for your Mac (Apple Silicon: `parakeet-mlx` and `mlx-whisper`; Intel: `faster-whisper`) and their dependencies (on Apple Silicon these include PyTorch, NumPy and SciPy, roughly 1 GB),
+- prints which speech-to-text engine it will use and why, e.g. `Speech-to-text: parakeet (auto: Apple Silicon with Parakeet installed)`,
 - registers Edit Twin with Claude Code for all your projects (`claude mcp add --scope user`),
 - copies the `/edit-twin-rough-cut` skill to `~/.claude/skills/edit-twin-rough-cut` (re-running the installer updates it),
 - creates the working folder `~/Movies/Edit Twin`.
 
-The first transcription downloads a free speech model from Hugging Face, once: [`mlx-community/whisper-large-v3-turbo`](https://huggingface.co/mlx-community/whisper-large-v3-turbo) on Apple Silicon, or `large-v3-turbo` for faster-whisper on Intel (about 1.5 GB).
+The first transcription downloads a free speech model from Hugging Face, once, for the engine in use: [`mlx-community/parakeet-tdt-0.6b-v3`](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3) on Apple Silicon, or Whisper large-v3-turbo (about 1.5 GB) where Parakeet isn't used.
+
+### Choosing the speech-to-text engine
+
+You don't have to choose: by default (**auto**) Edit Twin uses **Parakeet** on Apple Silicon Macs for the languages it knows (English and 24 other European languages), and **Whisper** on Intel Macs and for any other language. On the author's footage Parakeet caught 80% of um/uh against Whisper's 35%, made fewer word errors and ran ~3.6× faster ([benchmark](https://alyssasworld.github.io/edit-twin-asr-benchmark/)); Whisper punctuates slightly better and knows ~99 languages.
+
+| You want | Do |
+|---|---|
+| Whisper, even though Parakeet would run | ask Claude to switch ("use Whisper for transcription"); it saves `engine: whisper` with `update_style` |
+| to film in another language | ask Claude to set your language (`update_style` `language`, e.g. `ja`); auto then picks Whisper if Parakeet doesn't know it |
+| to never install Parakeet, or to fix the engine for everyone on a machine | `./install.sh --engine whisper` (or `--engine parakeet`). This saves `EDIT_TWIN_ASR` with the server registration, which wins over the choice saved in Claude. `./install.sh --engine auto` removes it |
+| to compare them on your own video | ask Claude to `compare_engines`: both engines on your timeline, with markers on the fillers only one of them heard |
+
+`get_style` (and the server's log in `/mcp`) says which engine will run and why.
+
+### Names and jargon
+
+Parakeet takes no spelling hints, so names are corrected after transcription, for both engines. Tell Claude the names you say ("Navier-Stokes, POPMART") and it saves them (`update_style` `add_vocabulary`): close misspellings ("Popma") and spacing ("Skull Panda") are corrected to them in every transcript, while real words that only look similar are left alone. Corrections that are always right can be saved as exact fixes (`add_fixes`, or `remember_fixes` when captioning). Both live in `style.json` under `transcription`.
 
 ### One-time Mac permissions
 
@@ -117,7 +135,7 @@ Final Cut Pro ──Export XML──▶ Edit Twin edits the timeline ──Impor
 - **Frame-accurate.** All maths uses exact rational time, the same way FCPXML stores it, so cuts never drift.
 - **Non-destructive.** Effects, keyframes, colour, roles and metadata Edit Twin doesn't touch are carried through as they are. Connected clips (B-roll, titles, music) survive cuts underneath them.
 - **Checked.** Every result is validated against Apple's FCPXML DTD (from inside Final Cut Pro) before import, and every edit can be undone.
-- **Local speech-to-text** with Whisper (`mlx-whisper` on Apple Silicon), prompted to transcribe verbatim, so it usually keeps the fillers and repeats you want to cut.
+- **Local speech-to-text** with Parakeet (`parakeet-mlx`, Apple Silicon) or Whisper (`mlx-whisper` / `faster-whisper`, prompted to transcribe verbatim), keeping the fillers and repeats you want to cut, with your saved names corrected afterwards.
 - **Style learning** compares the kept source ranges of the two versions, uses the audio to tell pauses from words, and grid-searches pause settings to match your trims.
 - **Live control** of the app (menus, shortcuts, playhead) uses AppleScript / System Events.
 
@@ -144,7 +162,8 @@ Final Cut Pro ──Export XML──▶ Edit Twin edits the timeline ──Impor
 - A **look** is saved as the effects stack on an adjustment clip. Paid plugins (e.g. colour plugins) and LUT files must be installed on the Mac that uses it.
 - `render_preview` is a rough preview (straight cuts, no effects or titles). The real result is in Final Cut Pro.
 - **Captions** are regular titles (one per caption), so they're easy to tweak but a long video can have hundreds of them. A caption style described in words uses Final Cut's Basic Title; copy a title you styled yourself for animation or effects. A style copied from a title keeps that title's exact size and position, so check it when using it on a project with a different resolution.
-- Whisper occasionally stretches word timings over pauses, so always check the plan before approving.
+- Speech-to-text word timings are approximate (Whisper occasionally stretches them over pauses; Parakeet's word ends are within 100 ms about half the time), so always check the plan before approving.
+- Parakeet's punctuation and capitals are a little weaker than Whisper's; the captions skill checks them in the dry run. Names it mishears badly (not just a close spelling) need an exact fix once.
 
 ## Files and disk space
 
@@ -169,7 +188,9 @@ Settings you can pass as environment variables when registering:
 |---|---|---|
 | `EDIT_TWIN_DIR` | `~/Movies/Edit Twin` | working folder |
 | `HF_HOME` | `~/.cache/huggingface` | where the speech model is stored |
+| `EDIT_TWIN_ASR` | `auto` | speech-to-text engine: `auto`, `whisper` or `parakeet`. When set to an engine it's a lock that wins over the user's saved choice (`./install.sh --engine` sets it) |
 | `EDIT_TWIN_WHISPER_MODEL` | see above | a different Whisper model (e.g. a smaller one for older Macs) |
+| `EDIT_TWIN_PARAKEET_MODEL` | `mlx-community/parakeet-tdt-0.6b-v3` | a different Parakeet model |
 | `EDIT_TWIN_DTD_DIR` | inside Final Cut Pro | folder with Apple's `FCPXMLv1_*.dtd` files, if Final Cut Pro isn't in `/Applications` |
 
 For example, to keep everything on an external drive, run this from the cloned folder:
@@ -190,14 +211,15 @@ claude mcp add --scope user -e EDIT_TWIN_DIR="/Volumes/MyDrive/Edit Twin" -e HF_
 claude mcp remove edit-twin --scope user
 rm -rf ~/.claude/skills/edit-twin-rough-cut ~/.claude/skills/edit-twin-captions
 rm -rf /path/to/edit-twin-mcp            # the cloned folder, including .venv
-rm -rf ~/.cache/huggingface/hub/models--mlx-community--whisper-large-v3-turbo   # Apple Silicon model
+rm -rf ~/.cache/huggingface/hub/models--mlx-community--parakeet-tdt-0.6b-v3     # Apple Silicon models
+rm -rf ~/.cache/huggingface/hub/models--mlx-community--whisper-large-v3-turbo
 ```
 Delete `~/Movies/Edit Twin` too if you don't want to keep your style and exports.
 
 ## Development
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -e '.[transcribe]' pytest
+python3 -m venv .venv && .venv/bin/pip install -e '.[transcribe,parakeet]' pytest
 .venv/bin/pytest -q tests     # self-contained: generates its own footage, no Final Cut Pro needed
 ```
 

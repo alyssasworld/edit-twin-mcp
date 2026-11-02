@@ -16,7 +16,7 @@ Use the `edit-twin` MCP tools. The user's original project is never modified: th
    Tell the user which format you picked in one line.
 
 ## 2. Analyse (change nothing yet)
-1. `transcribe`, with `vocabulary` set to names and jargon likely in the video.
+1. `transcribe`, with `vocabulary` set to names and jargon likely in the video (comma-separated; the saved vocabulary in `get_style` always applies). It uses the saved engine; Parakeet catches far more um/uh than Whisper.
 2. `find_repeats`: stutters, retakes and um/uh fillers. It doesn't catch everything: read the transcript (`include_words`) sentence by sentence for false starts and abandoned fragments ("she wanted her… and as well as that"), and for gaps of ~0.3s or more between words where the transcript missed an um or a breath. For each retake, compare the takes and choose. Keep the one with clearer delivery, no stumbles and a clean ending; if they're equal, keep the later take. When removing a retake, also drop a leftover connector ("and", "so") at the start of the kept take if it no longer reads naturally.
 3. Pauses, depending on format:
    - **Reel**: `find_silences` with `format` "short" (the saved reel settings).

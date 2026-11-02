@@ -22,6 +22,11 @@ transcribe = [
     "mlx-whisper; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "faster-whisper; sys_platform != 'darwin' or platform_machine != 'arm64'",
 ]
+# the faster engine on Apple Silicon (see transcribe.py); install.sh adds it unless
+# run with --engine whisper. Installs nothing on other machines.
+parakeet = [
+    "parakeet-mlx>=0.5.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
 
 [project.scripts]
 edit-twin-mcp = "edit_twin_mcp.server:main"

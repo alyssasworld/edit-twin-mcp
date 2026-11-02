@@ -82,12 +82,35 @@ def _is_anchored(el: ET.Element) -> bool:
 # cut stays with the clip it was said in.
 WORD_CORE = 0.3
 WORD_MIN_OVERLAP = 0.05
+# Parakeet's word times are centred on the real word but scatter both ways at a cut: a
+# word after a pause can start ~0.3 s early, a short word at the end of a clip can start
+# right at (or just past) the cut. So each Parakeet word, widened by WORD_PAD on both
+# sides, goes to the ONE clip it overlaps most (never two, so no duplicates). Measured on
+# four real tight-cut edits against what the kept audio actually says, this dropped 31
+# words where the Whisper rule dropped 183; the Whisper rule stays best for Whisper.
+WORD_PAD = 0.1
 
 
 def _word_in(w: dict, lo: float, hi: float) -> bool:
+    """Whisper: is enough of the word's last part inside [lo, hi)?"""
     s = max(w["s"], w["e"] - WORD_CORE)
     overlap = min(w["e"], hi) - max(s, lo)
     return overlap > 0 and overlap >= min(WORD_MIN_OVERLAP, (w["e"] - s) / 2)
+
+
+def _best_clip(w: dict, ranges: list[tuple[int, float, float]]) -> int | None:
+    """Parakeet: the clip (index) that the padded word overlaps most, or None."""
+    a, b = w["s"] - WORD_PAD, max(w["e"], w["s"]) + WORD_PAD
+    best, best_ov = None, 0.0
+    for idx, lo, hi in ranges:
+        ov = min(b, hi) - max(a, lo)
+        if ov > best_ov:
+            best, best_ov = idx, ov
+    return best
+
+
+def _clamp(v: float, lo: float, hi: float) -> float:
+    return min(hi, max(lo, v))
 
 
 def _fcp_color_to_hex(value: str) -> str:
@@ -1277,9 +1300,19 @@ class Timeline:
         """Place a file transcript onto the timeline: only words still in the edit,
         with timeline times. A sentence that crosses a cut is split at the cut."""
         out: list[dict] = []
-        for idx, el in enumerate(self.items()):
-            if el.tag != "asset-clip" or self.media_path(el) != file_path or el.find("timeMap") is not None:
-                continue
+        clips = [(idx, el) for idx, el in enumerate(self.items())
+                 if el.tag == "asset-clip" and self.media_path(el) == file_path and el.find("timeMap") is None]
+        # Parakeet words are placed in exactly one clip (see WORD_PAD); Whisper's by _word_in
+        home: dict[int, int | None] = {}
+        if str(data.get("engine", "")).startswith("parakeet"):
+            ranges = []
+            for idx, el in clips:
+                a0 = parse_time(self.resource(el.get("ref")).get("start"))
+                ranges.append((idx, float(self.start(el) - a0), float(self.start(el) + self.dur(el) - a0)))
+            for seg in data["segments"]:
+                for w in seg.get("words") or []:
+                    home[id(w)] = _best_clip(w, ranges)
+        for idx, el in clips:
             asset = self.resource(el.get("ref"))
             a_start = parse_time(asset.get("start"))
             off, st, d = self.off(el), self.start(el), self.dur(el)
@@ -1289,7 +1322,10 @@ class Timeline:
 
             for seg in data["segments"]:
                 words = seg.get("words") or []
-                visible = [w for w in words if _word_in(w, float(st - a_start), float(st + d - a_start))]
+                if home:
+                    visible = [w for w in words if home.get(id(w)) == idx]
+                else:
+                    visible = [w for w in words if _word_in(w, float(st - a_start), float(st + d - a_start))]
                 if not words:
                     mid = a_start + Fraction(str((seg["start"] + seg["end"]) / 2))
                     if not (st <= mid < st + d):
@@ -1301,7 +1337,9 @@ class Timeline:
                     s_tl, e_tl = to_tl(visible[0]["s"]), to_tl(visible[-1]["e"])
                     text = " ".join(w["w"] for w in visible)
                 lo, hi = float(off), float(off + d)
-                s_tl, e_tl = max(lo, s_tl), min(hi, e_tl)
+                # a padded Parakeet word can start just past the cut; keep times inside the clip
+                s_tl, e_tl = _clamp(s_tl, lo, hi), _clamp(e_tl, lo, hi)
+                e_tl = max(e_tl, s_tl)
                 o = float(self.origin)
                 entry = {"start": round(s_tl - o, 2), "end": round(e_tl - o, 2), "clip": str(idx), "text": text}
                 if start is not None and entry["end"] < start:
@@ -1309,8 +1347,10 @@ class Timeline:
                 if end is not None and entry["start"] > end:
                     continue
                 if include_words and visible:
-                    entry["words"] = [[w["w"], round(max(lo, to_tl(w["s"])) - o, 2),
-                                       round(min(hi, to_tl(w["e"])) - o, 2)] for w in visible]
+                    entry["words"] = []
+                    for w in visible:
+                        ws, we = _clamp(to_tl(w["s"]), lo, hi), _clamp(to_tl(w["e"]), lo, hi)
+                        entry["words"].append([w["w"], round(ws - o, 2), round(max(we, ws) - o, 2)])
                     low = [w["w"] for w in visible if w.get("p", 1) < 0.5]
                     if low:
                         entry["unsure_words"] = low

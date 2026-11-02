@@ -434,46 +434,113 @@ def remove_silences(threshold_db: float | None = None, min_silence: float | None
     return out
 
 
-@tool
-def transcribe(start: float | None = None, end: float | None = None, include_words: bool = False,
-               language: str | None = None, vocabulary: str | None = None, refresh: bool = False) -> dict:
-    """Transcribe what's said in the storyline (local Whisper, word timestamps), with
-    times on the CURRENT timeline (they update after cuts). Use it to find repeated
-    takes, flubs and filler. include_words=True adds per-word times for precise cuts —
-    best with start/end to limit the window. vocabulary: names/jargon to help spelling
-    (e.g. product names, places, people). First run per file takes a while and
-    may download the model; later calls are instant."""
+def _terms(vocabulary: str | None, saved=None) -> list[str]:
+    """Saved vocabulary plus names given for this call ("Navier, Popmart")."""
+    extra = [t.strip() for t in re.split(r"[,;\n]", vocabulary or "") if t.strip()]
+    return list(dict.fromkeys([*(saved or []), *extra]))
+
+
+def _transcript(f: str, language: str | None = None, vocabulary: str | None = None,
+                refresh: bool = False, engine: str | None = None) -> dict:
+    """One file's transcript from the chosen engine (else the saved one), with the
+    user's remembered fixes and vocabulary applied. Every tool reads transcripts here."""
     from . import transcribe as tr
 
+    asr = style.load(WORK_DIR)["transcription"]
+    data = tr.transcribe_file(f, os.path.join(WORK_DIR, ".transcripts"), language or asr.get("language"),
+                              vocabulary, force=refresh, engine=engine, saved_engine=asr.get("engine"))
+    return tr.correct(data, _terms(vocabulary, asr.get("vocabulary")), asr.get("fixes"))
+
+
+@tool
+def transcribe(start: float | None = None, end: float | None = None, include_words: bool = False,
+               language: str | None = None, vocabulary: str | None = None, refresh: bool = False,
+               engine: Literal["auto", "whisper", "parakeet"] | None = None) -> dict:
+    """Transcribe what's said in the storyline (local speech-to-text, word timestamps), with
+    times on the CURRENT timeline (they update after cuts). Use it to find repeated
+    takes, flubs and filler. include_words=True adds per-word times for precise cuts —
+    best with start/end to limit the window. vocabulary: names/jargon, comma-separated
+    (e.g. "Navier, Popmart"); near-miss spellings are corrected to them (saved ones from
+    update_style always apply). engine: whisper or parakeet for this call only (default:
+    auto or the saved choice, see get_style speech_to_text). First run per file and engine takes a while and may
+    download the model; later calls are instant."""
     tl = _tl()
     files = tl.storyline_media()
     if not files:
         raise EditError("No playable clips in the storyline to transcribe")
-    cache = os.path.join(WORK_DIR, ".transcripts")
-    segments, engines = [], set()
+    segments, engines, corrections, why = [], set(), [], set()
     for f in files:
-        data = tr.transcribe_file(f, cache, language, vocabulary, force=refresh)
+        data = _transcript(f, language, vocabulary, refresh, engine)
         engines.add(data["engine"])
+        why.add(data.get("engine_choice", ""))
+        corrections += data.get("corrections", [])
         segments += tl.map_transcript(f, data, include_words, start, end)
     segments.sort(key=lambda s: s["start"])
-    return {"engine": ", ".join(sorted(engines)), "segments": segments,
-            "tip": "To remove a take, cut_ranges from just before its first word to just before "
-                   "the next kept word; keep ~0.1s of air."}
+    out = {"engine": ", ".join(sorted(engines)), "engine_choice": "; ".join(sorted(w for w in why if w)),
+           "segments": segments,
+           "tip": "To remove a take, cut_ranges from just before its first word to just before "
+                  "the next kept word; keep ~0.1s of air."}
+    if corrections:
+        out["corrections"] = corrections[:50]
+    return out
 
 
 def _timeline_words(language: str | None = None, vocabulary: str | None = None,
-                    start: float | None = None, end: float | None = None) -> list[list]:
-    from . import transcribe as tr
-
+                    start: float | None = None, end: float | None = None,
+                    engine: str | None = None) -> list[list]:
     tl = _tl()
     words = []
     for f in tl.storyline_media():
-        data = tr.transcribe_file(f, os.path.join(WORK_DIR, ".transcripts"), language, vocabulary)
+        data = _transcript(f, language, vocabulary, engine=engine)
         for seg in tl.map_transcript(f, data, include_words=True, start=start, end=end):
             words += seg.get("words", [])
     words = [w for w in words if (start is None or w[2] > start) and (end is None or w[1] < end)]
     words.sort(key=lambda w: w[1])
     return words
+
+
+@tool
+def compare_engines(start: float | None = None, end: float | None = None,
+                    add_markers: bool = False) -> dict:
+    """Transcribe the storyline with BOTH engines (Whisper and Parakeet) and compare what
+    a rough cut would see: fillers (um/uh) each one caught, which fillers only one of them
+    found (with times), and word counts. Nothing is cut. add_markers=True puts a marker on
+    each filler only one engine found ("um (Parakeet only)"), to show in Final Cut.
+    The first run transcribes twice, so it takes a while."""
+    from .learn import find_fillers
+
+    found = {}
+    for eng in ("whisper", "parakeet"):
+        words = _timeline_words(start=start, end=end, engine=eng)
+        found[eng] = {"words": len(words), "fillers": find_fillers(words)}
+
+    def unmatched(a, b):
+        # a filler counts as found by both when the other engine has one within 0.3 s
+        return [f for f in found[a]["fillers"]
+                if not any(abs(f["remove_from"] - g["remove_from"]) <= 0.3 for g in found[b]["fillers"])]
+
+    only = {"whisper": unmatched("whisper", "parakeet"), "parakeet": unmatched("parakeet", "whisper")}
+    out = {eng: {"words": found[eng]["words"], "fillers": len(found[eng]["fillers"]),
+                 "filler_seconds": round(sum(f["remove_to"] - f["remove_from"] for f in found[eng]["fillers"]), 2)}
+           for eng in found}
+    out["only_parakeet"] = only["parakeet"]
+    out["only_whisper"] = only["whisper"]
+    if add_markers and (only["parakeet"] or only["whisper"]):
+        tl = _tl()
+
+        def mark():
+            rep = None
+            for eng, label in (("parakeet", "Parakeet only"), ("whisper", "Whisper only")):
+                for f in only[eng]:
+                    r = tl.add_marker(f["remove_from"], f"{f['word']} ({label})")
+                    if rep is None:
+                        rep = r
+                    else:
+                        rep.changes += r.changes
+            return rep
+
+        out["markers"] = _edit(mark)
+    return out
 
 
 @tool
@@ -674,9 +741,14 @@ def _build_captions(style_name, fmt, start, end, fixes, language, vocabulary):
     if s.get("frame") and list(s["frame"]) != [w, h]:
         warnings.append(f"Caption style '{name}' was made on a {s['frame'][0]}x{s['frame'][1]} project and this one "
                         f"is {w}x{h}; check its size and position in Final Cut.")
-    words = captions.apply_fixes(_timeline_words(language, vocabulary, start, end), fixes)
+    raw = _timeline_words(language, vocabulary, start, end)
+    words = captions.apply_fixes(raw, fixes)
     if not words:
         raise EditError("No transcript words in that range")
+    unused = [k for k, v in (fixes or {}).items() if captions.apply_fixes(raw, {k: v}) == raw]
+    if unused:
+        warnings.append("These fixes matched nothing in the transcript, so they changed nothing "
+                        f"(check the spelling against dry_run): {', '.join(unused)}")
     limit = end if end is not None else secs(tl.duration())
     return name, fmt, s, captions.build(words, s, captions.title_width(w, h), limit), warnings
 
@@ -686,20 +758,29 @@ def add_captions(style_name: str | None = None, format: Literal["auto", "short",
                  start: float | None = None, end: float | None = None,
                  fixes: dict[str, str] | None = None, dry_run: bool = False,
                  replace_existing: bool = True, language: str | None = None,
-                 vocabulary: str | None = None) -> dict:
+                 vocabulary: str | None = None, remember_fixes: bool = False) -> dict:
     """Caption the edit from the transcript, timed to the words as they're said on the
     CURRENT timeline (run after cutting). Each caption is a title on its own lane above
     everything, so it isn't affected by an adjustment-clip look. style_name: a saved caption
     style (default: the user's default for the format; format auto = short if vertical or
     under 3 minutes). fixes: corrections for misheard words or phrases
     {"cloud": "Claude", "is it's": "is. It's"};
-    vocabulary helps the transcript spell names. dry_run=True returns the captions without
+    fixes can also restore punctuation and capitals ("so it works" -> "So, it works.").
+    Fixes that match nothing are listed in warnings. remember_fixes=True saves them so
+    every later transcript gets them (only for corrections that are always right, like
+    names; ask the user first). vocabulary: names/jargon, comma-separated; near-miss
+    spellings are corrected to them. dry_run=True returns the captions without
     adding them, to check wording and line breaks first. replace_existing removes captions
     added before (only within start/end if given). Fix a single caption with edit_title."""
     from . import captions
 
     name, fmt, s, caps, warnings = _build_captions(style_name, format, start, end, fixes, language, vocabulary)
     out: dict = {"style": name, "format": fmt, "count": len(caps)}
+    if remember_fixes and fixes and not dry_run:
+        st = style.load(WORK_DIR)
+        st["transcription"]["fixes"] = {**(st["transcription"].get("fixes") or {}), **fixes}
+        style.save(WORK_DIR, st)
+        out["remembered_fixes"] = sorted(st["transcription"]["fixes"])
     if warnings:
         out["warnings"] = warnings
     if dry_run:
@@ -771,7 +852,8 @@ def export_srt(output_path: str | None = None, style_name: str | None = None,
 @tool
 def get_style() -> dict:
     """The user's saved editing style: pause-cut tightness, audio chain, default look,
-    saved looks, caption styles, the fonts they use and notes learned from their edits.
+    saved looks, caption styles, the fonts they use, notes learned from their edits, and
+    transcription (engine, vocabulary, remembered fixes).
     Read this before a rough cut or captioning."""
     from . import captions
 
@@ -781,6 +863,10 @@ def get_style() -> dict:
     out["caption_styles"] = {k: captions.summary(v) for k, v in st["captions"]["styles"].items()}
     out["caption_defaults"] = st["captions"]["default"]
     out["saved_looks"] = style.list_looks(WORK_DIR)
+    from . import transcribe as tr
+
+    out["speech_to_text"] = tr.describe_choice(st["transcription"].get("engine"),
+                                               st["transcription"].get("language"))
     out["file"] = style.style_path(WORK_DIR)
     return out
 
@@ -790,13 +876,44 @@ def update_style(threshold_db: float | None = None, min_silence: float | None = 
                  keep_after_speech: float | None = None, keep_before_speech: float | None = None,
                  default_look: str | None = None, remove_stutters: bool | None = None,
                  add_note: str | None = None, remove_note: str | None = None,
-                 format: Literal["short", "long"] = "short") -> dict:
+                 format: Literal["short", "long"] = "short",
+                 engine: Literal["auto", "whisper", "parakeet"] | None = None,
+                 language: str | None = None,
+                 add_vocabulary: list[str] | None = None, remove_vocabulary: list[str] | None = None,
+                 add_fixes: dict[str, str] | None = None, remove_fixes: list[str] | None = None) -> dict:
     """Change saved style defaults, e.g. when the user says cuts feel too tight
     (raise keep_after_speech) or too loose (lower min_silence). format: which pause
     settings to change, short (reels) or long (vlogs). add_note stores a preference in
     words (e.g. "keep 'So' at the start of the hook"); remove_note deletes the notes
-    containing that text (e.g. one that's out of date)."""
+    containing that text (e.g. one that's out of date).
+    engine: the speech-to-text engine every tool uses: auto (Parakeet on Apple Silicon for
+    the languages it knows, otherwise Whisper), whisper or parakeet. language: the language
+    the user films in ("en", "ja"; "" to go back to detecting it); with auto, languages
+    Parakeet doesn't know use Whisper. If EDIT_TWIN_ASR is set (at install), it wins over
+    the saved engine; speech_to_text in the result says which engine will run and why.
+    add_vocabulary: names and jargon the user says ("Navier", "Popmart"); near-miss
+    spellings in every transcript are corrected to them. add_fixes: corrections that are
+    always right, applied to every transcript ({"cloud code": "Claude Code"})."""
     st = style.load(WORK_DIR)
+    asr = st["transcription"]
+    from . import transcribe as tr
+
+    if language is not None:
+        asr["language"] = language.strip() or None
+    if engine is not None:
+        # fails with a hint if it can't run here (not installed, wrong Mac, language)
+        tr.choose_engine(engine, None, asr.get("language"))
+        asr["engine"] = engine
+    if add_vocabulary:
+        asr["vocabulary"] = list(dict.fromkeys([*asr.get("vocabulary", []),
+                                                *(t.strip() for t in add_vocabulary if t.strip())]))
+    if remove_vocabulary:
+        gone = {t.lower() for t in remove_vocabulary}
+        asr["vocabulary"] = [t for t in asr.get("vocabulary", []) if t.lower() not in gone]
+    if add_fixes:
+        asr["fixes"] = {**(asr.get("fixes") or {}), **add_fixes}
+    if remove_fixes:
+        asr["fixes"] = {k: v for k, v in (asr.get("fixes") or {}).items() if k not in remove_fixes}
     key = _pause_key(format)
     for k, v in {"threshold_db": threshold_db, "min_silence": min_silence,
                  "keep_after_speech": keep_after_speech, "keep_before_speech": keep_before_speech}.items():
@@ -814,7 +931,12 @@ def update_style(threshold_db: float | None = None, min_silence: float | None = 
     if add_note:
         st["notes"].append(add_note)
     style.save(WORK_DIR, st)
-    return get_style()
+    out = get_style()
+    lock = os.environ.get("EDIT_TWIN_ASR")
+    if engine is not None and lock and lock.strip().lower() not in ("", "auto", engine):
+        out["warning"] = (f"Saved engine '{engine}', but EDIT_TWIN_ASR={lock} was set at install and wins. "
+                          "To change it, re-run ./install.sh without --engine (or with --engine auto).")
+    return out
 
 
 @tool
@@ -913,7 +1035,6 @@ def learn_from_edit(your_version: str | None = None, claude_version: str | None 
     short (reels) and long (vlogs) videos, so learning from a vlog doesn't change how reels
     are cut; format auto = short if vertical or under 3 minutes."""
     from .learn import compare
-    from . import transcribe as tr
 
     if your_version is None:
         your_version = fcp_app.export_xml(WORK_DIR, f"your edit {_dt.datetime.now():%Y-%m-%d %H%M%S}")
@@ -927,7 +1048,7 @@ def learn_from_edit(your_version: str | None = None, claude_version: str | None 
     transcripts = {}
     for f in set(hand.storyline_media()) | set(claude.storyline_media()):
         try:
-            transcripts[f] = tr.transcribe_file(f, os.path.join(WORK_DIR, ".transcripts"))
+            transcripts[f] = _transcript(f)
         except Exception:
             pass
     report = compare(claude, hand, transcripts, calibrate=True)
@@ -1119,6 +1240,13 @@ def send_to_final_cut(project_name: str | None = None, output_path: str | None =
 
 
 def main() -> None:
+    import sys
+
+    from . import transcribe as tr
+
+    # stderr shows up in Claude Code's MCP logs (stdout carries the protocol)
+    asr = style.load(WORK_DIR)["transcription"]
+    print(f"edit-twin: {tr.describe_choice(asr.get('engine'), asr.get('language'))}", file=sys.stderr)
     mcp.run()
 
 
